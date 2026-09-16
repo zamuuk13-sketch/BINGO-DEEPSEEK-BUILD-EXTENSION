@@ -28,11 +28,7 @@
     return result;
   }
 
-  function detectPage() {
-    const host = location.hostname.toLowerCase();
-    return /(^|\.)deepseek\.com$/.test(host);
-  }
-
+  function detectPage() { return /(^|\.)deepseek\.com$/i.test(location.hostname); }
   function findComposer() { return first(SELECTORS.composer); }
 
   function setComposerText(element, text) {
@@ -47,8 +43,7 @@
       return element;
     }
     element.textContent = '';
-    try { document.execCommand('insertText', false, value); }
-    catch (_) { element.textContent = value; }
+    try { document.execCommand('insertText', false, value); } catch (_) { element.textContent = value; }
     element.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:value}));
     return element;
   }
@@ -66,19 +61,16 @@
     return true;
   }
 
-  function extractMessageText(node) {
-    return String(node?.innerText || node?.textContent || '').trim();
-  }
-
+  function extractMessageText(node) { return String(node?.innerText || node?.textContent || '').trim(); }
   function findAssistantMessages(root = document) { return all(SELECTORS.assistant, root); }
   function findLatestAssistantMessage(root = document) {
     const nodes = findAssistantMessages(root);
     return nodes[nodes.length - 1] || null;
   }
 
-  function observeMessages(callback) {
+  function observeMessages(callback, options = {}) {
     if (typeof callback !== 'function') throw new TypeError('observeMessages exige callback.');
-    const target = document.body || document.documentElement;
+    const target = options.target || document.body || document.documentElement;
     const observer = new MutationObserver(mutations => callback(mutations));
     observer.observe(target, {childList:true, subtree:true, characterData:true});
     return () => observer.disconnect();
@@ -89,13 +81,7 @@
   }
 
   function getState() {
-    return {
-      version:VERSION,
-      page:detectPage(),
-      hostname:location.hostname,
-      composer:!!findComposer(),
-      assistantMessages:findAssistantMessages().length
-    };
+    return {version:VERSION, page:detectPage(), hostname:location.hostname, composer:!!findComposer(), assistantMessages:findAssistantMessages().length};
   }
 
   window.BingoDeepSeekAdapterV11 = Object.freeze({
