@@ -1,9 +1,9 @@
 (() => {
   'use strict';
 
-  const CONFIG_PROMPT = `Voce esta conectado ao BINGO DEEPSEEK BUILD v4, um agente autonomo de desenvolvimento.
+  const CONFIG_PROMPT = `Voce esta conectado ao BINGO DEEPSEEK BUILD v5, um agente autonomo de desenvolvimento local.
 
-VOCE TEM FERRAMENTAS REAIS. Nao finja que executou algo. Tudo que precisar alterar no computador deve ser feito pelas ferramentas BINGO abaixo.
+VOCE TEM FERRAMENTAS REAIS. Nao finja que executou algo. Tudo que precisar alterar no computador deve ser feito pelas ferramentas BINGO.
 
 PROTOCOLO:
 ===BINGO_TOOL===
@@ -12,7 +12,7 @@ PROTOCOLO:
 
 A extensao executa a ferramenta e devolve:
 ===BINGO_RESULT===
-{"protocol":"BINGO_AGENT_V4","id":"req-1","tool":"fs.write","ok":true,"result":{...}}
+{"protocol":"BINGO_AGENT_V5","id":"req-1","tool":"fs.write","ok":true,"result":{...}}
 ===BINGO_END_RESULT===
 
 FERRAMENTAS:
@@ -24,32 +24,48 @@ FERRAMENTAS:
 - fs.list {project,path}
 - fs.delete {project,path}
 - fs.rename {project,from,to}
-- process.run {project,command,args,cwd}
+- process.run {project,command,args,cwd,timeout?}
 
-MODO AUTONOMO OBRIGATORIO:
+MODO AUTONOMO:
 1. Projeto novo: project.create primeiro.
-2. Crie a estrutura com fs.mkdir e fs.write.
-3. Projeto existente: use project.status e fs.list antes de modificar.
-4. Para entender um erro, use fs.read no arquivo relevante e depois process.run para reproduzir.
-5. Depois de uma correcao, execute novamente o processo/teste e leia stdout/stderr.
-6. Se o processo retornar exitCode diferente de 0, trate isso como falha real e continue investigando/corrigindo.
-7. Nao diga que algo esta funcionando sem um resultado de ferramenta que comprove isso.
-8. Pode emitir varias BINGO_TOOL, mas use IDs unicos. A extensao executara uma por vez para manter a ordem.
-9. Nao coloque BINGO_TOOL dentro de blocos de codigo comuns.
-10. Depois de cada BINGO_RESULT, continue automaticamente o trabalho. Nao pare apenas porque um arquivo foi criado.
-11. Continue em ciclos INSPECIONAR -> ALTERAR -> EXECUTAR -> LER RESULTADO -> CORRIGIR ate concluir o objetivo.
-12. Ao criar jogos/apps, priorize arquivos realmente executaveis e teste-os. Nao entregue somente uma arquitetura teorica.
-13. Se uma ferramenta falhar, nao invente sucesso: analise a mensagem de erro e tente uma abordagem corrigida.
+2. Projeto existente: project.status e fs.list antes de modificar.
+3. Inspecione arquivos relevantes com fs.read antes de corrigir problemas.
+4. Depois de alterar algo, execute um teste/processo real com process.run.
+5. Leia SEMPRE stdout e stderr quando process.run terminar.
+6. exitCode 0 significa que aquele processo terminou com sucesso; nao significa que o projeto inteiro esta perfeito.
+7. Se houver erro, identifique a causa, leia o arquivo relevante, corrija e execute novamente.
+8. Trabalhe em ciclos INSPECIONAR -> ALTERAR -> EXECUTAR -> ANALISAR -> CORRIGIR.
+9. Use IDs unicos nas BINGO_TOOL.
+10. Nunca invente BINGO_RESULT, exitCode, arquivos ou testes.
+11. Nao pare apenas porque um arquivo foi criado. Continue ate o objetivo solicitado estar implementado e testado.
+12. Evite loops infinitos. Se a mesma falha persistir depois de 3 tentativas substancialmente diferentes, pare, explique a causa e informe o que ainda precisa ser resolvido.
+13. Ao finalizar, informe os arquivos principais alterados e os testes realmente executados.
 14. process.run nao usa shell. Passe executavel e argumentos separadamente.
-15. Ao finalizar, informe resumidamente o que foi criado e quais testes tiveram exitCode 0.
+15. Para Godot, prefira comandos que realmente validem o projeto/script e capturem stderr/stdout.
+16. Para Python/Node, execute o interpretador diretamente com argumentos separados.
 
-A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos. A extensao e a interface; a bridge Python executa as operacoes locais.`;
+MEMORIA DE SESSAO:
+- Considere todos os BINGO_RESULT recebidos como estado real da sessao.
+- Nao repita uma operacao que ja retornou sucesso sem motivo.
+- Use os resultados de leitura/teste anteriores para decidir o proximo passo.
 
+A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A extensao coordena o agente; a bridge executa as operacoes locais.`;
+
+  const MAX_RETRIES_PER_SIGNATURE = 3;
+  const MAX_HISTORY = 150;
   let active = false;
   let observer = null;
   let toolQueue = Promise.resolve();
   const processed = new Set();
+  const retryCounts = new Map();
   const toolHistory = [];
+  const pendingQueue = [];
+  const sessionState = {
+    project: null,
+    lastResult: null,
+    tests: [],
+    startedAt: null
+  };
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -91,8 +107,8 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
     if (document.getElementById('bingo-agent-panel')) return;
     const p = document.createElement('div');
     p.id = 'bingo-agent-panel';
-    p.innerHTML = '<b>🧠 BINGO AGENT v4</b><span id="bingo-status">Desconectado</span><span id="bingo-tools">0 tools executadas</span><span id="bingo-queue">Fila: 0</span><button id="bingo-agent-start">Ativar agente</button>';
-    Object.assign(p.style, {position:'fixed',right:'18px',bottom:'18px',zIndex:2147483647,background:'#101010',color:'#fff',padding:'14px',borderRadius:'14px',boxShadow:'0 8px 35px #0009',font:'13px Arial',width:'235px',border:'1px solid #333'});
+    p.innerHTML = '<b>🧠 BINGO AGENT v5</b><span id="bingo-status">Desconectado</span><span id="bingo-tools">0 tools executadas</span><span id="bingo-queue">Fila: 0</span><span id="bingo-retries">Falhas repetidas: 0</span><button id="bingo-agent-start">Ativar agente</button>';
+    Object.assign(p.style, {position:'fixed',right:'18px',bottom:'18px',zIndex:2147483647,background:'#101010',color:'#fff',padding:'14px',borderRadius:'14px',boxShadow:'0 8px 35px #0009',font:'13px Arial',width:'250px',border:'1px solid #333'});
     for (const s of p.querySelectorAll('span')) Object.assign(s.style,{display:'block',marginTop:'7px',color:'#bbb'});
     const b = p.querySelector('button');
     Object.assign(b.style,{marginTop:'10px',width:'100%',padding:'8px',border:0,borderRadius:'8px',cursor:'pointer'});
@@ -104,7 +120,9 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
     const tools = document.getElementById('bingo-tools');
     if (tools) tools.textContent = `${toolHistory.length} tools executadas`;
     const queue = document.getElementById('bingo-queue');
-    if (queue) queue.textContent = `Fila: ${Math.max(0, pendingQueue.length)}`;
+    if (queue) queue.textContent = `Fila: ${pendingQueue.length}`;
+    const retries = document.getElementById('bingo-retries');
+    if (retries) retries.textContent = `Falhas repetidas: ${[...retryCounts.values()].filter(v => v > 0).length}`;
   }
 
   function extractToolCalls(text) {
@@ -134,20 +152,46 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
     return nodes.map(n => n.innerText || n.textContent || '').join('\n');
   }
 
-  const pendingQueue = [];
+  function signature(request) {
+    try { return `${request.tool}|${JSON.stringify(request.args || {})}`; }
+    catch { return `${request.tool}|unserializable`; }
+  }
+
+  function rememberResult(request, result) {
+    const entry = {
+      at: Date.now(),
+      id: request.id,
+      tool: request.tool,
+      ok: !!result.ok,
+      result: result.result ?? null,
+      error: result.error || null
+    };
+    sessionState.lastResult = entry;
+    toolHistory.push(entry);
+    if (toolHistory.length > MAX_HISTORY) toolHistory.shift();
+    if (request.tool === 'project.create' && result.ok) sessionState.project = result.result?.project || request.args?.name || null;
+    if (request.tool === 'process.run' && result.ok) {
+      sessionState.tests.push({at:Date.now(), project:request.args?.project, command:request.args?.command, exitCode:result.result?.exitCode});
+      if (sessionState.tests.length > 50) sessionState.tests.shift();
+    }
+  }
 
   function enqueueTool(request) {
+    const id = String(request.id || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    request.id = id;
+    if (processed.has(id) || pendingQueue.some(item => item.id === id)) return;
     pendingQueue.push(request);
     updatePanel();
-    toolQueue = toolQueue.then(() => executeTool(request)).catch(() => {});
+    toolQueue = toolQueue.then(() => executeTool(request)).catch(error => {
+      setStatus(`Erro na fila: ${error.message || error}`);
+    });
   }
 
   async function executeTool(request) {
-    const id = String(request.id || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const id = String(request.id);
     if (processed.has(id)) return;
     processed.add(id);
-    toolHistory.push({id,tool:request.tool,status:'executando'});
-    pendingQueue.shift();
+    pendingQueue.splice(pendingQueue.findIndex(item => item.id === id), 1);
     updatePanel();
     setStatus(`Executando ${request.tool}...`);
 
@@ -158,23 +202,33 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
       const tools = window.BingoAgent.listTools();
       if (!tools[request.tool]) throw new Error(`Ferramenta desconhecida: ${request.tool}`);
       result = await window.BingoAgent.call(request.tool, request.args || {});
-      toolHistory[toolHistory.length - 1].status = result.ok ? 'ok' : 'erro';
-      setStatus(result.ok ? `✓ ${request.tool}` : `✗ ${request.tool}`);
     } catch (error) {
       result = {ok:false, error:{message:error.message || String(error)}};
-      toolHistory[toolHistory.length - 1].status = 'erro';
-      setStatus(`✗ ${request.tool}`);
+    }
+
+    rememberResult(request, result);
+    const sig = signature(request);
+    if (!result.ok) retryCounts.set(sig, (retryCounts.get(sig) || 0) + 1);
+    else retryCounts.delete(sig);
+
+    const retries = retryCounts.get(sig) || 0;
+    if (!result.ok && retries >= MAX_RETRIES_PER_SIGNATURE) {
+      setStatus(`✗ ${request.tool} — limite de tentativas`);
+    } else {
+      setStatus(result.ok ? `✓ ${request.tool}` : `✗ ${request.tool}`);
     }
     updatePanel();
 
     const payload = {
-      protocol:'BINGO_AGENT_V4',
+      protocol:'BINGO_AGENT_V5',
       id,
       tool:request.tool,
       ok:!!result.ok,
       result:result.result ?? result.data ?? null,
-      error:result.error || null
+      error:result.error || null,
+      session:{project:sessionState.project, recentTests:sessionState.tests.slice(-5)}
     };
+
     const message = `===BINGO_RESULT===\n${JSON.stringify(payload)}\n===BINGO_END_RESULT===`;
     await sleep(250);
     const el = composer();
@@ -190,7 +244,7 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
     for (const request of extractToolCalls(text)) {
       const id = String(request.id || '');
       if (id && processed.has(id)) continue;
-      if (pendingQueue.some(item => String(item.id || '') === id)) continue;
+      if (id && pendingQueue.some(item => String(item.id) === id)) continue;
       enqueueTool(request);
     }
   }
@@ -204,7 +258,6 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
 
   async function startAgent() {
     if (active) return;
-    active = true;
     createPanel();
     setStatus('Testando bridge Python...');
     try {
@@ -218,15 +271,16 @@ A bridge local aplica sandbox de caminhos e uma lista de executaveis permitidos.
       setStatus(`Bridge OK • porta ${health.port || 8765}`);
     } catch (error) {
       setStatus('Bridge Python offline — inicie o .bat');
-      active = false;
       return;
     }
 
     const el = composer();
-    if (!el) { setStatus('Composer nao encontrado.'); active = false; return; }
+    if (!el) { setStatus('Composer nao encontrado.'); return; }
+    active = true;
+    sessionState.startedAt = Date.now();
     setComposer(el, CONFIG_PROMPT);
     submit(el);
-    setStatus('Agente ativo ✓');
+    setStatus('Agente v5 ativo ✓');
     watch();
   }
 
