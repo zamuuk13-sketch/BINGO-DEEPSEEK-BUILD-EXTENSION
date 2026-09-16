@@ -1,61 +1,84 @@
 (() => {
   'use strict';
 
-  // Keeps the BINGO transport protocol out of the visible DeepSeek conversation.
-  // The protocol messages are still real chat messages, so DeepSeek receives them,
-  // but the user never has to see the internal JSON transport.
+  // V11.3 performance sanitizer.
+  // Transport results are hidden, but we avoid scanning the entire DeepSeek DOM
+  // on every mutation. Only newly-added/changed nodes are inspected.
   const MARKERS = ['===BINGO_RESULT===', '===BINGO_END_RESULT==='];
   const STYLE_ID = 'bingo-v11-transport-style';
+  const HIDDEN = 'bingo-v11-hidden-transport';
+  let scheduled = false;
 
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = '.bingo-v11-hidden-transport{display:none!important;}';
+    style.textContent = `.${HIDDEN}{display:none!important;}`;
     (document.head || document.documentElement).appendChild(style);
   }
 
-  function containsProtocol(node) {
-    const text = node?.textContent || '';
-    return MARKERS.some(marker => text.includes(marker));
+  function isTransportText(text) {
+    if (!text) return false;
+    return text.includes(MARKERS[0]) || text.includes(MARKERS[1]);
   }
 
   function hideMessage(node) {
-    if (!(node instanceof Element)) return;
-    if (!containsProtocol(node)) return;
+    if (!(node instanceof Element) || !isTransportText(node.textContent || '')) return false;
 
+    // Prefer the actual user bubble. Do not walk/search the whole document.
     let target = node.closest('[data-message-author-role="user"], [data-role="user"]');
-    if (!target) {
-      target = node.closest('div.group, div[class*="message"], div[class*="chat"]') || node;
+    if (!target) target = node.closest('div.group');
+    if (!target) target = node;
+
+    if (!target.classList.contains(HIDDEN)) {
+      target.classList.add(HIDDEN);
+      target.setAttribute('data-bingo-v11-transport', 'hidden');
     }
-    target.classList.add('bingo-v11-hidden-transport');
-    target.setAttribute('data-bingo-v11-transport', 'hidden');
+    return true;
   }
 
-  function scan(root = document.body) {
-    if (!root) return;
-    installStyle();
-    if (root instanceof Element && containsProtocol(root)) hideMessage(root);
-    for (const node of root.querySelectorAll?.('*') || []) {
-      if (containsProtocol(node)) hideMessage(node);
+  function scanNode(node) {
+    if (!(node instanceof Element)) return;
+    if (hideMessage(node)) return;
+
+    // Inspect only descendants that are likely message/content nodes.
+    const candidates = node.querySelectorAll?.('[data-message-author-role="user"], [data-role="user"], .ds-markdown, div.group');
+    for (const child of candidates || []) {
+      if (isTransportText(child.textContent || '')) hideMessage(child);
     }
+  }
+
+  function scheduleScan(node) {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      scanNode(node || document.body);
+    });
   }
 
   function start() {
     installStyle();
-    scan();
+    scanNode(document.body);
+
     const observer = new MutationObserver(mutations => {
       for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.nodeType === Node.ELEMENT_NODE) scan(node);
+        if (mutation.type === 'characterData') {
+          const parent = mutation.target.parentElement;
+          if (parent && isTransportText(mutation.target.data || '')) hideMessage(parent);
+          continue;
         }
-        if (mutation.target instanceof Element && containsProtocol(mutation.target)) {
-          hideMessage(mutation.target);
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // Do not recursively traverse the complete page.
+            scheduleScan(node);
+          }
         }
       }
     });
+
     observer.observe(document.body, {subtree:true, childList:true, characterData:true});
-    window.BingoV11Transport = { version: 1, scan };
+    window.BingoV11Transport = { version: 2, scan: () => scanNode(document.body) };
   }
 
   if (document.body) start();
