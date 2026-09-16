@@ -6,13 +6,14 @@ const TOOLS = new Set([
   'agent.plan.read','agent.plan.write','agent.plan.update','agent.plan.next','agent.verify',
   'env.inspect','project.scan','process.start','process.list','process.stop','artifact.list','workspace.snapshot',
   'agent.autonomy.start','agent.autonomy.stop','agent.autonomy.status','agent.autonomy.step','agent.batch',
+  'agent.runtime.status','agent.ledger.read','agent.checkpoint.create','agent.checkpoint.list','agent.session.resume','agent.health',
   'fs.mkdir','fs.write','fs.read','fs.list','fs.delete','fs.rename','process.run'
 ]);
 
 function sessionFor(tabId) {
   if (!sessions.has(tabId)) sessions.set(tabId, {
     name:'DeepSeek-Project', files:{}, folders:new Set(), history:[],
-    processedCommands:new Set(), startedAt:Date.now(), plan:null, diagnostics:[]
+    processedCommands:new Set(), startedAt:Date.now(), plan:null, diagnostics:[], runtime:null
   });
   return sessions.get(tabId);
 }
@@ -95,10 +96,11 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
       const session=sessionFor(tabId);
       if(msg.tool.startsWith('agent.plan.')&&result.ok) session.plan=result.result?.plan||null;
       if(msg.tool==='project.create'&&result.ok) session.name=result.result?.project||session.name;
-      sendResponse({...result,requestId:msg.requestId,tool:msg.tool,transport:'python-http+v10'});
+      if((msg.tool==='agent.runtime.status'||msg.tool==='agent.health')&&result.ok) session.runtime=result.result||result;
+      sendResponse({...result,requestId:msg.requestId,tool:msg.tool,transport:'python-http+v11'});
     }).catch(error=>{
       const message=error?.name==='AbortError'?'Tempo limite da bridge excedido.':(error.message||String(error));
-      sendResponse({ok:false,requestId:msg.requestId,tool:msg.tool,error:{message},transport:'python-http+v10'});
+      sendResponse({ok:false,requestId:msg.requestId,tool:msg.tool,error:{message},transport:'python-http+v11'});
     });
     return true;
   }
@@ -116,7 +118,7 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
     if(session.history.length>100)session.history.shift();return;
   }
   if(msg.type==='GET_SESSION'){
-    sendResponse({name:session.name,files:session.files,folders:[...session.folders],history:session.history,plan:session.plan,diagnostics:session.diagnostics.slice(-10)});return true;
+    sendResponse({name:session.name,files:session.files,folders:[...session.folders],history:session.history,plan:session.plan,diagnostics:session.diagnostics.slice(-10),runtime:session.runtime});return true;
   }
   if(msg.type==='RESET_SESSION'){sessions.delete(tabId);sendResponse({ok:true});return true;}
 });
