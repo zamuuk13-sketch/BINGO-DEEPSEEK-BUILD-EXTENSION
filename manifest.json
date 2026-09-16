@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.4.0",
-  "description": "Agente de desenvolvimento para DeepSeek com bridge Python local, memoria persistente e planner V7.",
+  "version": "2.5.0",
+  "description": "Agente de desenvolvimento para DeepSeek com bridge Python local, memoria persistente, planner V7 e verifier V8.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*", "http://127.0.0.1:8765/*"],
   "action": {
