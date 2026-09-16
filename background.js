@@ -1,6 +1,8 @@
 importScripts('agent/native-bridge.js');
 
 const sessions = new Map();
+const PYTHON_BRIDGE = 'http://127.0.0.1:8765';
+const TOOLS = new Set(['project.create','project.status','fs.mkdir','fs.write','fs.read','fs.list','fs.delete','fs.rename','process.run']);
 
 function sessionFor(tabId) {
   if (!sessions.has(tabId)) {
@@ -12,16 +14,35 @@ function sessionFor(tabId) {
   return sessions.get(tabId);
 }
 
+async function pythonCall(tool, args) {
+  const response = await fetch(`${PYTHON_BRIDGE}/tool`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: `bingo-${Date.now()}-${Math.random().toString(16).slice(2)}`, op: tool, ...args })
+  });
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.error || 'Python Bridge error');
+  return data;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id;
 
   if (msg.type === 'BINGO_TOOL_CALL') {
     if (typeof tabId !== 'number') { sendResponse({ ok:false, error:{ message:'Aba invalida.' } }); return true; }
-    const allowed = new Set(['project.create','project.status','fs.mkdir','fs.write','fs.read','fs.list','fs.delete','fs.rename','process.run']);
-    if (!allowed.has(msg.tool)) { sendResponse({ ok:false, error:{ message:`Ferramenta nao permitida: ${msg.tool}` } }); return true; }
-    BingoNativeBridge.call(msg.tool, msg.args || {}).then(result => {
-      sendResponse({ ...result, requestId: msg.requestId, tool: msg.tool });
+    if (!TOOLS.has(msg.tool)) { sendResponse({ ok:false, error:{ message:`Ferramenta nao permitida: ${msg.tool}` } }); return true; }
+
+    pythonCall(msg.tool, msg.args || {}).then(result => {
+      sendResponse({ ...result, requestId: msg.requestId, tool: msg.tool, transport:'python-http' });
+    }).catch(error => {
+      sendResponse({ ok:false, requestId:msg.requestId, tool:msg.tool, error:{ message:error.message }, transport:'python-http' });
     });
+    return true;
+  }
+
+  if (msg.type === 'BINGO_BRIDGE_HEALTH') {
+    fetch(`${PYTHON_BRIDGE}/health`).then(r => r.json()).then(data => sendResponse({ ok:true, ...data }))
+      .catch(error => sendResponse({ ok:false, error:error.message }));
     return true;
   }
 
