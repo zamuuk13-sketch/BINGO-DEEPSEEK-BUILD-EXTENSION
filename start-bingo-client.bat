@@ -3,14 +3,9 @@ setlocal
 cd /d "%~dp0"
 
 echo ==========================================
-echo        BINGO CLIENT - STAGE 6
+echo        BINGO CLIENT - STAGE 7
  echo ==========================================
 echo.
-
-echo [INFO] Agent Runtime: ativo
-
-echo [INFO] Memoria/plano/permissoes: locais
- echo.
 
 where py >nul 2>nul
 if %errorlevel%==0 (
