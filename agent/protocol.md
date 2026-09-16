@@ -1,6 +1,6 @@
-# BINGO Agent Protocol v1
+# BINGO Agent Protocol v6
 
-The agent layer turns the DeepSeek conversation into a tool-using development agent.
+The agent layer turns the DeepSeek conversation into a real local development agent with persistent project memory.
 
 ## Tool request
 
@@ -14,7 +14,7 @@ The agent layer turns the DeepSeek conversation into a tool-using development ag
 
 ```text
 ===BINGO_RESULT===
-{"id":"req-1","ok":true,"tool":"fs.write","result":{"bytes":123}}
+{"protocol":"BINGO_AGENT_V6","id":"req-1","ok":true,"tool":"fs.write","result":{"bytes":123}}
 ===BINGO_END_RESULT===
 ```
 
@@ -22,6 +22,8 @@ The agent layer turns the DeepSeek conversation into a tool-using development ag
 
 - `project.create`
 - `project.status`
+- `agent.memory.read`
+- `agent.memory.write`
 - `fs.mkdir`
 - `fs.write`
 - `fs.read`
@@ -30,16 +32,34 @@ The agent layer turns the DeepSeek conversation into a tool-using development ag
 - `fs.rename`
 - `process.run`
 
-The extension owns the protocol parser and dispatches local operations through Native Messaging. The model never receives direct operating-system access; every operation is translated into a defined tool call.
+## Persistent memory
+
+Every project has a `bingo-agent.json` file at its root. The Python bridge initializes it automatically and records relevant tool activity, tests, and errors without storing full source files in the history.
+
+The memory can also be explicitly read or replaced with `agent.memory.read` and `agent.memory.write`. It contains:
+
+- current project context;
+- completed tasks;
+- pending tasks;
+- known errors;
+- test results;
+- bounded tool history.
+
+The memory survives closing DeepSeek, the browser, and the extension because it is stored in the local project directory.
 
 ## Agent loop
 
 1. Model emits a tool request.
 2. Extension validates the request and arguments.
-3. Extension calls the local bridge.
+3. Extension calls the local Python bridge.
 4. Bridge executes inside the project sandbox.
-5. Bridge returns structured JSON.
-6. Extension injects the result into the conversation.
-7. Model continues from the actual result.
+5. Bridge records relevant persistent state.
+6. Bridge returns structured JSON.
+7. Extension injects the result into the conversation.
+8. Model continues from the actual result.
 
-This enables iterative build/test/fix loops rather than one-shot file generation.
+For an existing project, the recommended startup sequence is:
+
+`project.status -> agent.memory.read -> fs.list -> fs.read -> modify -> process.run -> agent.memory.write`
+
+This enables iterative build/test/fix loops that can continue across separate DeepSeek sessions.
