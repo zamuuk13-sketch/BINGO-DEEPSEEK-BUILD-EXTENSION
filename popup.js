@@ -14,3 +14,8 @@ document.getElementById('start').addEventListener('click', async () => {
     status.textContent = 'Recarregue a página do DeepSeek e tente novamente.';
   }
 });
+
+document.getElementById('diagnostics').addEventListener('click', async () => {
+  await chrome.tabs.create({url: chrome.runtime.getURL('diagnostics.html')});
+  window.close();
+});
