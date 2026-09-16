@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const TOOL_VERSION = 5;
+  const TOOL_VERSION = 6;
   const tools = {
     'project.create': { description: 'Create a real local project workspace and initialize persistent agent memory.', args: ['name'] },
     'project.status': { description: 'Inspect project, memory and planner status.', args: ['project'] },
@@ -18,11 +18,17 @@
     'process.stop': { description: 'Stop a persistent BINGO process.', args: ['sessionId', 'force'] },
     'artifact.list': { description: 'List project artifacts with size and modification time.', args: ['project', 'path'] },
     'workspace.snapshot': { description: 'Capture a compact environment, project, plan, test and process snapshot.', args: ['project'] },
-    'agent.autonomy.start': { description: 'Start a bounded autonomous project session with a goal and step limit.', args: ['project', 'goal', 'maxSteps'] },
-    'agent.autonomy.stop': { description: 'Stop the bounded autonomous project session.', args: ['project'] },
+    'agent.autonomy.start': { description: 'Start a bounded autonomous project session with a goal and step limit; supports resume.', args: ['project', 'goal', 'maxSteps', 'resume'] },
+    'agent.autonomy.stop': { description: 'Stop the autonomous session and persist a checkpoint.', args: ['project'] },
     'agent.autonomy.status': { description: 'Read the current autonomous session state.', args: ['project'] },
     'agent.autonomy.step': { description: 'Record one autonomous decision/action and enforce the session step limit.', args: ['project', 'action'] },
     'agent.batch': { description: 'Execute a bounded sequence of real BINGO operations, stopping at the first failure.', args: ['project', 'operations'] },
+    'agent.runtime.status': { description: 'Read durable V11 runtime and session status.', args: ['project'] },
+    'agent.ledger.read': { description: 'Read the persistent execution ledger.', args: ['project','limit'] },
+    'agent.checkpoint.create': { description: 'Create a durable project runtime checkpoint.', args: ['project','label'] },
+    'agent.checkpoint.list': { description: 'List durable runtime checkpoints.', args: ['project','limit'] },
+    'agent.session.resume': { description: 'Recover the latest persisted autonomous session state.', args: ['project'] },
+    'agent.health': { description: 'Return production runtime health information.', args: ['project'] },
     'fs.mkdir': { description: 'Create a directory inside the project.', args: ['project', 'path'] },
     'fs.write': { description: 'Write a UTF-8 file to the local project.', args: ['project', 'path', 'content'] },
     'fs.read': { description: 'Read a UTF-8 local project file.', args: ['project', 'path'] },
@@ -32,15 +38,12 @@
     'process.run': { description: 'Run an approved executable inside the project.', args: ['project', 'command', 'args', 'cwd'] }
   };
 
+  const optional = new Set(['status','notes','attempts','timeout','cwd','force','goal','maxSteps','action','path','operations','args','resume','limit','label']);
   function validate(tool, args) {
     const schema = tools[tool];
     if (!schema) throw new Error(`Ferramenta desconhecida: ${tool}`);
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('args deve ser um objeto.');
-    for (const key of schema.args) {
-      if (!(key in args) && !['status','notes','attempts','timeout','cwd','force','goal','maxSteps','action','path','operations','args'].includes(key)) {
-        throw new Error(`Argumento obrigatorio ausente: ${key}`);
-      }
-    }
+    for (const key of schema.args) if (!(key in args) && !optional.has(key)) throw new Error(`Argumento obrigatorio ausente: ${key}`);
   }
 
   window.BingoAgent = {
@@ -74,11 +77,17 @@
       stopProcess: (sessionId, force = false) => window.BingoAgent.call('process.stop', { sessionId, force }),
       listArtifacts: (project, path = '') => window.BingoAgent.call('artifact.list', { project, path }),
       snapshot: project => window.BingoAgent.call('workspace.snapshot', { project }),
-      autonomyStart: (project, goal, maxSteps = 20) => window.BingoAgent.call('agent.autonomy.start', { project, goal, maxSteps }),
+      autonomyStart: (project, goal, maxSteps = 20, resume = true) => window.BingoAgent.call('agent.autonomy.start', { project, goal, maxSteps, resume }),
       autonomyStop: project => window.BingoAgent.call('agent.autonomy.stop', { project }),
       autonomyStatus: project => window.BingoAgent.call('agent.autonomy.status', { project }),
       autonomyStep: (project, action) => window.BingoAgent.call('agent.autonomy.step', { project, action }),
       batch: (project, operations) => window.BingoAgent.call('agent.batch', { project, operations }),
+      runtimeStatus: project => window.BingoAgent.call('agent.runtime.status', { project }),
+      ledger: (project, limit = 50) => window.BingoAgent.call('agent.ledger.read', { project, limit }),
+      checkpoint: (project, label = 'checkpoint') => window.BingoAgent.call('agent.checkpoint.create', { project, label }),
+      checkpoints: (project, limit = 10) => window.BingoAgent.call('agent.checkpoint.list', { project, limit }),
+      resume: project => window.BingoAgent.call('agent.session.resume', { project }),
+      health: project => window.BingoAgent.call('agent.health', { project }),
       mkdir: (project, path) => window.BingoAgent.call('fs.mkdir', { project, path }),
       write: (project, path, content) => window.BingoAgent.call('fs.write', { project, path, content }),
       read: (project, path) => window.BingoAgent.call('fs.read', { project, path }),
