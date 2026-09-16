@@ -3,19 +3,19 @@ setlocal
 cd /d "%~dp0"
 
 echo ==========================================
-echo        BINGO CLIENT - FOUNDATION
+echo        BINGO CLIENT - STAGE 5
  echo ==========================================
 echo.
 
 where py >nul 2>nul
 if %errorlevel%==0 (
-    py -3 -m bingo_client.main
+    py -3 -m bingo_client.main_v5
     goto :end
 )
 
 where python >nul 2>nul
 if %errorlevel%==0 (
-    python -m bingo_client.main
+    python -m bingo_client.main_v5
     goto :end
 )
 
