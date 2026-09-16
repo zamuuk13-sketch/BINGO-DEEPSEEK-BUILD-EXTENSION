@@ -1,8 +1,7 @@
-importScripts('agent/native-bridge.js');
-
 const sessions = new Map();
 const PYTHON_BRIDGE = 'http://127.0.0.1:8765';
 const TOOLS = new Set(['project.create','project.status','fs.mkdir','fs.write','fs.read','fs.list','fs.delete','fs.rename','process.run']);
+const REQUEST_TIMEOUT_MS = 15000;
 
 function sessionFor(tabId) {
   if (!sessions.has(tabId)) {
@@ -14,8 +13,18 @@ function sessionFor(tabId) {
   return sessions.get(tabId);
 }
 
+async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function pythonCall(tool, args) {
-  const response = await fetch(`${PYTHON_BRIDGE}/tool`, {
+  const response = await fetchWithTimeout(`${PYTHON_BRIDGE}/tool`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: `bingo-${Date.now()}-${Math.random().toString(16).slice(2)}`, op: tool, ...args })
@@ -23,6 +32,12 @@ async function pythonCall(tool, args) {
   const data = await response.json();
   if (!data.ok) throw new Error(data.error || 'Python Bridge error');
   return data;
+}
+
+async function bridgeHealth() {
+  const response = await fetchWithTimeout(`${PYTHON_BRIDGE}/health`, {}, 3000);
+  if (!response.ok) throw new Error(`Bridge HTTP ${response.status}`);
+  return response.json();
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -35,13 +50,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     pythonCall(msg.tool, msg.args || {}).then(result => {
       sendResponse({ ...result, requestId: msg.requestId, tool: msg.tool, transport:'python-http' });
     }).catch(error => {
-      sendResponse({ ok:false, requestId:msg.requestId, tool:msg.tool, error:{ message:error.message }, transport:'python-http' });
+      const message = error.name === 'AbortError'
+        ? 'Tempo esgotado ao conectar com a Python Bridge.'
+        : error.message;
+      sendResponse({ ok:false, requestId:msg.requestId, tool:msg.tool, error:{ message }, transport:'python-http' });
     });
     return true;
   }
 
   if (msg.type === 'BINGO_BRIDGE_HEALTH') {
-    fetch(`${PYTHON_BRIDGE}/health`).then(r => r.json()).then(data => sendResponse({ ok:true, ...data }))
+    bridgeHealth().then(data => sendResponse({ ok:true, ...data }))
       .catch(error => sendResponse({ ok:false, error:error.message }));
     return true;
   }
