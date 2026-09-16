@@ -7,6 +7,8 @@ import urllib.request
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from .agent_runtime import AgentRuntime
+
 RELAY = "http://127.0.0.1:8766"
 
 
@@ -18,9 +20,9 @@ def request(method: str, path: str, payload=None, timeout=2):
 
 
 class DeepSeekChat(tk.Toplevel):
-    """Desktop chat surface backed by the BINGO DeepSeek loopback relay."""
+    """Desktop chat surface backed by DeepSeek plus the local Agent Runtime."""
 
-    def __init__(self, master, project_name=""):
+    def __init__(self, master, project_name="", runtime: AgentRuntime | None = None):
         super().__init__(master)
         self.master_app = master
         self.title("BINGO • DeepSeek")
@@ -28,6 +30,7 @@ class DeepSeekChat(tk.Toplevel):
         self.minsize(650, 500)
         self.configure(bg="#0f1115")
         self.project_name = project_name
+        self.runtime = runtime
         self.running = True
         self.connected = False
         self._build()
@@ -69,15 +72,24 @@ class DeepSeekChat(tk.Toplevel):
             data = request("POST", "/connect", {"chat_name": self.project_name or "DeepSeek", "connection_id": f"desktop-{id(self)}"})
             self.connected = bool(data.get("connected"))
             self.status.config(text="● conectado" if self.connected else "● desconectado", fg="#55d187" if self.connected else "#9299a8")
-            self.add("BINGO", "Conexão DeepSeek estabelecida. O navegador ainda é o transporte da sessão nesta etapa.", "system")
+            if self.runtime:
+                self.runtime.record("deepseek.connect", data)
+                self.add("BINGO", "Agent Runtime ativo. Contexto, memória, plano e permissões ficam fora do chat visível.", "system")
+            else:
+                self.add("BINGO", "Conexão DeepSeek estabelecida. O navegador ainda é o transporte da sessão nesta etapa.", "system")
         except (OSError, urllib.error.URLError) as exc:
             self.status.config(text="● relay offline", fg="#ff8f8f")
             self.add("BINGO", f"Relay offline: {exc}", "system")
 
     def send(self):
         text = self.input.get("1.0", "end-1c").strip()
-        if not text: return
+        if not text:
+            return
         try:
+            if self.runtime:
+                self.runtime.record("chat.user", {"text": text})
+                # The full runtime context stays local. The browser remains the
+                # transport in Stage 6; no system prompt is rendered in this UI.
             request("POST", "/send", {"text": text})
             self.input.delete("1.0", "end")
             self.add("Você", text, "user")
@@ -85,19 +97,28 @@ class DeepSeekChat(tk.Toplevel):
             messagebox.showerror("BINGO DeepSeek", f"Não foi possível enviar:\n{exc}")
 
     def poll(self):
-        if not self.running: return
+        if not self.running:
+            return
         try:
             while True:
                 data = request("GET", "/inbound", timeout=1)
                 msg = data.get("message")
-                if not msg: break
-                self.add("DeepSeek", msg.get("text", ""), "assistant")
+                if not msg:
+                    break
+                text = msg.get("text", "")
+                if self.runtime:
+                    self.runtime.record("chat.assistant", {"text": text[-4000:]})
+                self.add("DeepSeek", text, "assistant")
         except OSError:
             pass
         self.after(500, self.poll)
 
     def close(self):
         self.running = False
-        try: request("POST", "/disconnect", {})
-        except OSError: pass
+        if self.runtime:
+            self.runtime.save()
+        try:
+            request("POST", "/disconnect", {})
+        except OSError:
+            pass
         self.destroy()
