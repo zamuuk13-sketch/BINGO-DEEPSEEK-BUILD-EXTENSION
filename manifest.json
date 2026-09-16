@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.8.2",
-  "description": "Agente de desenvolvimento para DeepSeek com Planner V7, Verifier V8, Environment V9, Autonomy V10, Production V11.2, transporte interno invisivel e gate de conclusao.",
+  "version": "2.8.3",
+  "description": "Agente de desenvolvimento para DeepSeek com Planner V7, Verifier V8, Environment V9, Autonomy V10 e Production V11.2.3.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*", "http://127.0.0.1:8765/*"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
-      "js": ["agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-ui-sanitizer.js", "agent/v11-runtime-guard.js"],
+      "js": ["agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-runtime-guard.js"],
       "run_at": "document_idle"
     }
   ],
