@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CONFIG_PROMPT = `Voce esta conectado ao BINGO DEEPSEEK BUILD v5, um agente autonomo de desenvolvimento local.
+  const CONFIG_PROMPT = `Voce esta conectado ao BINGO DEEPSEEK BUILD v6, um agente autonomo de desenvolvimento local com MEMORIA PERSISTENTE POR PROJETO.
 
 VOCE TEM FERRAMENTAS REAIS. Nao finja que executou algo. Tudo que precisar alterar no computador deve ser feito pelas ferramentas BINGO.
 
@@ -12,12 +12,14 @@ PROTOCOLO:
 
 A extensao executa a ferramenta e devolve:
 ===BINGO_RESULT===
-{"protocol":"BINGO_AGENT_V5","id":"req-1","tool":"fs.write","ok":true,"result":{...}}
+{"protocol":"BINGO_AGENT_V6","id":"req-1","tool":"fs.write","ok":true,"result":{...}}
 ===BINGO_END_RESULT===
 
 FERRAMENTAS:
 - project.create {name}
 - project.status {project}
+- agent.memory.read {project}
+- agent.memory.write {project,memory}
 - fs.mkdir {project,path}
 - fs.write {project,path,content}
 - fs.read {project,path}
@@ -26,30 +28,43 @@ FERRAMENTAS:
 - fs.rename {project,from,to}
 - process.run {project,command,args,cwd,timeout?}
 
+MEMORIA PERSISTENTE:
+- Cada projeto possui automaticamente um arquivo bingo-agent.json na raiz.
+- Esse arquivo sobrevive ao fechamento do DeepSeek, da extensao e do navegador.
+- O bridge registra automaticamente historico de ferramentas, testes e erros relevantes.
+- Ao iniciar trabalho em um projeto existente, SEMPRE use project.status e depois agent.memory.read.
+- Use a memoria para recuperar contexto, tarefas concluidas, tarefas pendentes, erros conhecidos e testes anteriores.
+- Depois de uma mudanca importante, use agent.memory.write para atualizar context, completedTasks, pendingTasks e qualquer conhecimento importante que nao seja apenas historico automatico.
+- Nao apague informacoes uteis da memoria sem motivo. Preserve o contexto anterior e atualize somente o necessario.
+- Nao coloque conteudo gigante de arquivos dentro da memoria; a memoria guarda contexto e historico, enquanto os arquivos reais ficam no projeto.
+
 MODO AUTONOMO:
 1. Projeto novo: project.create primeiro.
-2. Projeto existente: project.status e fs.list antes de modificar.
-3. Inspecione arquivos relevantes com fs.read antes de corrigir problemas.
-4. Depois de alterar algo, execute um teste/processo real com process.run.
-5. Leia SEMPRE stdout e stderr quando process.run terminar.
-6. exitCode 0 significa que aquele processo terminou com sucesso; nao significa que o projeto inteiro esta perfeito.
-7. Se houver erro, identifique a causa, leia o arquivo relevante, corrija e execute novamente.
-8. Trabalhe em ciclos INSPECIONAR -> ALTERAR -> EXECUTAR -> ANALISAR -> CORRIGIR.
-9. Use IDs unicos nas BINGO_TOOL.
-10. Nunca invente BINGO_RESULT, exitCode, arquivos ou testes.
-11. Nao pare apenas porque um arquivo foi criado. Continue ate o objetivo solicitado estar implementado e testado.
-12. Evite loops infinitos. Se a mesma falha persistir depois de 3 tentativas substancialmente diferentes, pare, explique a causa e informe o que ainda precisa ser resolvido.
-13. Ao finalizar, informe os arquivos principais alterados e os testes realmente executados.
-14. process.run nao usa shell. Passe executavel e argumentos separadamente.
-15. Para Godot, prefira comandos que realmente validem o projeto/script e capturem stderr/stdout.
-16. Para Python/Node, execute o interpretador diretamente com argumentos separados.
+2. Projeto existente: project.status e agent.memory.read antes de modificar.
+3. Depois, fs.list e fs.read nos arquivos relevantes.
+4. Planeje a menor sequencia de alteracoes necessaria.
+5. Depois de alterar algo, execute um teste/processo real com process.run.
+6. Leia SEMPRE stdout e stderr quando process.run terminar.
+7. exitCode 0 significa que aquele processo terminou com sucesso; nao significa que o projeto inteiro esta perfeito.
+8. Se houver erro, identifique a causa, leia o arquivo relevante, corrija e execute novamente.
+9. Trabalhe em ciclos INSPECIONAR -> ALTERAR -> EXECUTAR -> ANALISAR -> CORRIGIR.
+10. Use IDs unicos nas BINGO_TOOL.
+11. Nunca invente BINGO_RESULT, exitCode, arquivos, testes ou memoria.
+12. Nao pare apenas porque um arquivo foi criado. Continue ate o objetivo solicitado estar implementado e testado.
+13. Evite loops infinitos. Se a mesma falha persistir depois de 3 tentativas substancialmente diferentes, pare, explique a causa e informe o que ainda precisa ser resolvido.
+14. Ao finalizar, atualize a memoria com o estado real do trabalho e informe os arquivos principais alterados e os testes realmente executados.
+15. process.run nao usa shell. Passe executavel e argumentos separadamente.
+16. Para Godot, prefira comandos que realmente validem o projeto/script e capturem stderr/stdout.
+17. Para Python/Node, execute o interpretador diretamente com argumentos separados.
+18. Nao diga que algo foi testado se process.run nao confirmou isso.
 
-MEMORIA DE SESSAO:
-- Considere todos os BINGO_RESULT recebidos como estado real da sessao.
-- Nao repita uma operacao que ja retornou sucesso sem motivo.
-- Use os resultados de leitura/teste anteriores para decidir o proximo passo.
+CONTINUIDADE ENTRE SESSOES:
+- A memoria persistente e a fonte de contexto de longo prazo do projeto.
+- Ao retomar um projeto, primeiro recupere a memoria e depois confirme o estado atual dos arquivos; nao confie cegamente no historico.
+- Se a memoria disser que algo estava quebrado, reproduza o erro antes de assumir que continua quebrado.
+- Se os arquivos contradisserem a memoria, os arquivos e os testes atuais vencem; depois atualize a memoria.
 
-A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A extensao coordena o agente; a bridge executa as operacoes locais.`;
+A bridge Python possui sandbox de caminhos, lista de executaveis permitidos e memoria persistente local. A extensao coordena o agente; a bridge executa as operacoes locais.`;
 
   const MAX_RETRIES_PER_SIGNATURE = 3;
   const MAX_HISTORY = 150;
@@ -62,6 +77,7 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
   const pendingQueue = [];
   const sessionState = {
     project: null,
+    memory: null,
     lastResult: null,
     tests: [],
     startedAt: null
@@ -107,8 +123,8 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     if (document.getElementById('bingo-agent-panel')) return;
     const p = document.createElement('div');
     p.id = 'bingo-agent-panel';
-    p.innerHTML = '<b>🧠 BINGO AGENT v5</b><span id="bingo-status">Desconectado</span><span id="bingo-tools">0 tools executadas</span><span id="bingo-queue">Fila: 0</span><span id="bingo-retries">Falhas repetidas: 0</span><button id="bingo-agent-start">Ativar agente</button>';
-    Object.assign(p.style, {position:'fixed',right:'18px',bottom:'18px',zIndex:2147483647,background:'#101010',color:'#fff',padding:'14px',borderRadius:'14px',boxShadow:'0 8px 35px #0009',font:'13px Arial',width:'250px',border:'1px solid #333'});
+    p.innerHTML = '<b>🧠 BINGO AGENT v6</b><span id="bingo-status">Desconectado</span><span id="bingo-tools">0 tools executadas</span><span id="bingo-queue">Fila: 0</span><span id="bingo-memory">Memoria: aguardando projeto</span><span id="bingo-retries">Falhas repetidas: 0</span><button id="bingo-agent-start">Ativar agente</button>';
+    Object.assign(p.style, {position:'fixed',right:'18px',bottom:'18px',zIndex:2147483647,background:'#101010',color:'#fff',padding:'14px',borderRadius:'14px',boxShadow:'0 8px 35px #0009',font:'13px Arial',width:'270px',border:'1px solid #333'});
     for (const s of p.querySelectorAll('span')) Object.assign(s.style,{display:'block',marginTop:'7px',color:'#bbb'});
     const b = p.querySelector('button');
     Object.assign(b.style,{marginTop:'10px',width:'100%',padding:'8px',border:0,borderRadius:'8px',cursor:'pointer'});
@@ -121,6 +137,8 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     if (tools) tools.textContent = `${toolHistory.length} tools executadas`;
     const queue = document.getElementById('bingo-queue');
     if (queue) queue.textContent = `Fila: ${pendingQueue.length}`;
+    const memory = document.getElementById('bingo-memory');
+    if (memory) memory.textContent = sessionState.project ? `Memoria: ${sessionState.project} • persistente` : 'Memoria: aguardando projeto';
     const retries = document.getElementById('bingo-retries');
     if (retries) retries.textContent = `Falhas repetidas: ${[...retryCounts.values()].filter(v => v > 0).length}`;
   }
@@ -170,10 +188,14 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     toolHistory.push(entry);
     if (toolHistory.length > MAX_HISTORY) toolHistory.shift();
     if (request.tool === 'project.create' && result.ok) sessionState.project = result.result?.project || request.args?.name || null;
+    if (request.tool === 'project.status' && result.ok) sessionState.project = result.result?.project || request.args?.project || sessionState.project;
+    if (request.tool === 'agent.memory.read' && result.ok) sessionState.memory = result.result?.memory || null;
+    if (request.tool === 'agent.memory.write' && result.ok) sessionState.memory = result.result?.memory || null;
     if (request.tool === 'process.run' && result.ok) {
       sessionState.tests.push({at:Date.now(), project:request.args?.project, command:request.args?.command, exitCode:result.result?.exitCode});
       if (sessionState.tests.length > 50) sessionState.tests.shift();
     }
+    updatePanel();
   }
 
   function enqueueTool(request) {
@@ -187,6 +209,15 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     });
   }
 
+  async function sendResultToDeepSeek(payload) {
+    const message = `===BINGO_RESULT===\n${JSON.stringify(payload)}\n===BINGO_END_RESULT===`;
+    await sleep(250);
+    const el = composer();
+    if (!el) { setStatus('Composer nao encontrado para devolver resultado.'); return; }
+    setComposer(el, message);
+    submit(el);
+  }
+
   async function executeTool(request) {
     const id = String(request.id);
     if (processed.has(id)) return;
@@ -194,6 +225,24 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     pendingQueue.splice(pendingQueue.findIndex(item => item.id === id), 1);
     updatePanel();
     setStatus(`Executando ${request.tool}...`);
+
+    const sig = signature(request);
+    const previousFailures = retryCounts.get(sig) || 0;
+    if (previousFailures >= MAX_RETRIES_PER_SIGNATURE) {
+      const blocked = {
+        protocol:'BINGO_AGENT_V6',
+        id,
+        tool:request.tool,
+        ok:false,
+        result:null,
+        error:{message:'Limite de 3 tentativas para esta mesma operacao atingido. Altere a estrategia antes de tentar novamente.'},
+        session:{project:sessionState.project, recentTests:sessionState.tests.slice(-5)}
+      };
+      setStatus(`⛔ ${request.tool} — bloqueado apos 3 falhas`);
+      updatePanel();
+      await sendResultToDeepSeek(blocked);
+      return;
+    }
 
     let result;
     try {
@@ -207,7 +256,6 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     }
 
     rememberResult(request, result);
-    const sig = signature(request);
     if (!result.ok) retryCounts.set(sig, (retryCounts.get(sig) || 0) + 1);
     else retryCounts.delete(sig);
 
@@ -220,21 +268,16 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     updatePanel();
 
     const payload = {
-      protocol:'BINGO_AGENT_V5',
+      protocol:'BINGO_AGENT_V6',
       id,
       tool:request.tool,
       ok:!!result.ok,
       result:result.result ?? result.data ?? null,
       error:result.error || null,
-      session:{project:sessionState.project, recentTests:sessionState.tests.slice(-5)}
+      session:{project:sessionState.project, recentTests:sessionState.tests.slice(-5), memoryLoaded:!!sessionState.memory}
     };
 
-    const message = `===BINGO_RESULT===\n${JSON.stringify(payload)}\n===BINGO_END_RESULT===`;
-    await sleep(250);
-    const el = composer();
-    if (!el) { setStatus('Composer nao encontrado para devolver resultado.'); return; }
-    setComposer(el, message);
-    submit(el);
+    await sendResultToDeepSeek(payload);
   }
 
   function scan() {
@@ -280,7 +323,8 @@ A bridge Python possui sandbox de caminhos e lista de executaveis permitidos. A 
     sessionState.startedAt = Date.now();
     setComposer(el, CONFIG_PROMPT);
     submit(el);
-    setStatus('Agente v5 ativo ✓');
+    setStatus('Agente v6 ativo ✓');
+    updatePanel();
     watch();
   }
 
