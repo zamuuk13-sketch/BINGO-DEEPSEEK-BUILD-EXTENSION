@@ -19,10 +19,11 @@ ALLOWED_EXECUTABLES = {
 }
 
 MEMORY_FILE = "bingo-agent.json"
-MEMORY_VERSION = 1
+MEMORY_VERSION = 2
 MAX_HISTORY = 120
 MAX_TESTS = 50
 MAX_TEXT = 5000
+MAX_PLAN_TASKS = 200
 
 
 def now_iso():
@@ -49,6 +50,10 @@ def safe_path(project, relative=""):
     return base, target
 
 
+def default_plan():
+    return {"goal": "", "status": "idle", "tasks": [], "currentTaskId": None}
+
+
 def default_memory(project):
     return {
         "version": MEMORY_VERSION,
@@ -59,13 +64,44 @@ def default_memory(project):
         "pendingTasks": [],
         "knownErrors": [],
         "tests": [],
-        "history": []
+        "history": [],
+        "plan": default_plan()
     }
 
 
 def memory_path(project):
-    base, target = safe_path(project, MEMORY_FILE)
+    _, target = safe_path(project, MEMORY_FILE)
     return target
+
+
+def normalize_plan(value):
+    plan = default_plan()
+    if isinstance(value, dict):
+        plan.update({k: value[k] for k in plan if k in value})
+    if not isinstance(plan.get("tasks"), list):
+        plan["tasks"] = []
+    normalized = []
+    for i, raw in enumerate(plan["tasks"][:MAX_PLAN_TASKS]):
+        if not isinstance(raw, dict):
+            continue
+        task = dict(raw)
+        task["id"] = str(task.get("id") or f"task-{i+1}")
+        task["title"] = str(task.get("title") or "Tarefa sem titulo")[:500]
+        task["status"] = str(task.get("status") or "pending")
+        if task["status"] not in {"pending", "running", "done", "blocked", "cancelled"}:
+            task["status"] = "pending"
+        deps = task.get("dependsOn", [])
+        task["dependsOn"] = [str(x) for x in deps] if isinstance(deps, list) else []
+        task["attempts"] = int(task.get("attempts", 0) or 0)
+        task["notes"] = str(task.get("notes", ""))[:2000]
+        normalized.append(task)
+    plan["tasks"] = normalized
+    plan["goal"] = str(plan.get("goal", ""))[:5000]
+    plan["status"] = str(plan.get("status", "idle"))
+    ids = {t["id"] for t in normalized}
+    if plan.get("currentTaskId") not in ids:
+        plan["currentTaskId"] = None
+    return plan
 
 
 def normalize_memory(project, value):
@@ -83,6 +119,7 @@ def normalize_memory(project, value):
             memory[key] = []
         memory[key] = memory[key][-MAX_HISTORY:]
     memory["tests"] = memory["tests"][-MAX_TESTS:]
+    memory["plan"] = normalize_plan(memory.get("plan"))
     return memory
 
 
@@ -113,16 +150,73 @@ def compact(value, limit=MAX_TEXT):
     return text if len(text) <= limit else text[:limit] + "\n...[truncado]"
 
 
+def plan_read(project):
+    return normalize_plan(read_memory(project).get("plan"))
+
+
+def plan_write(project, plan):
+    memory = read_memory(project)
+    memory["plan"] = normalize_plan(plan)
+    return write_memory(project, memory)["plan"]
+
+
+def plan_update(project, task_id, status=None, notes=None, attempts=None):
+    memory = read_memory(project)
+    plan = normalize_plan(memory.get("plan"))
+    found = None
+    for task in plan["tasks"]:
+        if task["id"] == str(task_id):
+            found = task
+            break
+    if found is None:
+        raise ValueError(f"Tarefa nao encontrada: {task_id}")
+    if status is not None:
+        found["status"] = str(status)
+    if notes is not None:
+        found["notes"] = str(notes)[:2000]
+    if attempts is not None:
+        found["attempts"] = max(0, int(attempts))
+    if found["status"] == "running":
+        plan["currentTaskId"] = found["id"]
+        plan["status"] = "active"
+    elif found["status"] in {"done", "blocked", "cancelled"} and plan.get("currentTaskId") == found["id"]:
+        plan["currentTaskId"] = None
+    if plan["tasks"] and all(t["status"] in {"done", "cancelled"} for t in plan["tasks"]):
+        plan["status"] = "completed"
+    return write_memory(project, {**memory, "plan": plan})["plan"]
+
+
+def plan_next(project):
+    memory = read_memory(project)
+    plan = normalize_plan(memory.get("plan"))
+    done = {t["id"] for t in plan["tasks"] if t["status"] in {"done", "cancelled"}}
+    blocked = {t["id"] for t in plan["tasks"] if t["status"] == "blocked"}
+    current = next((t for t in plan["tasks"] if t["status"] == "running"), None)
+    if current:
+        return {"task": current, "plan": plan}
+    for task in plan["tasks"]:
+        if task["status"] != "pending":
+            continue
+        if task["id"] in blocked:
+            continue
+        if all(dep in done for dep in task.get("dependsOn", [])):
+            task["status"] = "running"
+            task["attempts"] = int(task.get("attempts", 0))
+            plan["currentTaskId"] = task["id"]
+            plan["status"] = "active"
+            saved = write_memory(project, {**memory, "plan": plan})
+            return {"task": next(t for t in saved["plan"]["tasks"] if t["id"] == task["id"]), "plan": saved["plan"]}
+    if plan["tasks"] and all(t["status"] in {"done", "cancelled"} for t in plan["tasks"]):
+        plan["status"] = "completed"
+    return {"task": None, "plan": write_memory(project, {**memory, "plan": plan})["plan"]}
+
+
 def record_event(project, op, req, result=None, error=None):
-    if not project or op.startswith("agent.memory."):
+    if not project or op.startswith("agent.memory.") or op.startswith("agent.plan."):
         return
     try:
         memory = read_memory(project)
-        event = {
-            "at": now_iso(),
-            "op": op,
-            "ok": error is None,
-        }
+        event = {"at": now_iso(), "op": op, "ok": error is None}
         if req.get("id") is not None:
             event["id"] = req.get("id")
         if op == "fs.write":
@@ -151,14 +245,7 @@ def record_event(project, op, req, result=None, error=None):
             memory["knownErrors"].append({"at": event["at"], "op": op, "error": compact(error)})
             memory["knownErrors"] = memory["knownErrors"][-MAX_HISTORY:]
         if op == "process.run" and isinstance(result, dict):
-            memory["tests"].append({
-                "at": event["at"],
-                "command": result.get("command", req.get("command", "")),
-                "args": [str(x) for x in req.get("args", [])],
-                "exitCode": result.get("exitCode"),
-                "stdout": compact(result.get("stdout", "")),
-                "stderr": compact(result.get("stderr", ""))
-            })
+            memory["tests"].append({"at": event["at"], "command": result.get("command", req.get("command", "")), "args": [str(x) for x in req.get("args", [])], "exitCode": result.get("exitCode"), "stdout": compact(result.get("stdout", "")), "stderr": compact(result.get("stderr", ""))})
             memory["tests"] = memory["tests"][-MAX_TESTS:]
         memory["history"].append(event)
         memory["history"] = memory["history"][-MAX_HISTORY:]
@@ -182,36 +269,35 @@ def execute(req):
 
     if not project:
         raise ValueError("Projeto obrigatorio")
-
     project = project_name(project)
 
     if op == "agent.memory.read":
         return {"project": project, "memoryFile": MEMORY_FILE, "memory": read_memory(project)}
-
     if op == "agent.memory.write":
         return {"project": project, "memoryFile": MEMORY_FILE, "memory": write_memory(project, req.get("memory", {}))}
+    if op == "agent.plan.read":
+        return {"project": project, "plan": plan_read(project)}
+    if op == "agent.plan.write":
+        return {"project": project, "plan": plan_write(project, req.get("plan", {}))}
+    if op == "agent.plan.update":
+        return {"project": project, "plan": plan_update(project, req.get("taskId"), req.get("status"), req.get("notes"), req.get("attempts"))}
+    if op == "agent.plan.next":
+        result = plan_next(project)
+        return {"project": project, **result}
 
     base, target = safe_path(project, req.get("path", ""))
     base.mkdir(parents=True, exist_ok=True)
 
     if op == "project.status":
         memory = read_memory(project)
-        return {
-            "project": project,
-            "exists": base.exists(),
-            "root": str(base),
-            "memoryFile": MEMORY_FILE,
-            "memoryUpdatedAt": memory.get("updatedAt"),
-            "knownErrors": len(memory.get("knownErrors", [])),
-            "tests": len(memory.get("tests", [])),
-        }
+        plan = normalize_plan(memory.get("plan"))
+        return {"project": project, "exists": base.exists(), "root": str(base), "memoryFile": MEMORY_FILE, "memoryUpdatedAt": memory.get("updatedAt"), "knownErrors": len(memory.get("knownErrors", [])), "tests": len(memory.get("tests", [])), "planStatus": plan.get("status"), "currentTaskId": plan.get("currentTaskId"), "planTasks": len(plan.get("tasks", []))}
 
     if op == "fs.mkdir":
         target.mkdir(parents=True, exist_ok=True)
         result = {"path": req.get("path", "")}
         record_event(project, op, req, result=result)
         return result
-
     if op == "fs.write":
         target.parent.mkdir(parents=True, exist_ok=True)
         content = str(req.get("content", ""))
@@ -219,29 +305,21 @@ def execute(req):
         result = {"path": req.get("path", ""), "bytes": len(content.encode("utf-8"))}
         record_event(project, op, req, result=result)
         return result
-
     if op == "fs.read":
         result = {"path": req.get("path", ""), "content": target.read_text(encoding="utf-8")}
         record_event(project, op, req, result={"path": req.get("path", "")})
         return result
-
     if op == "fs.list":
-        entries = []
-        for item in target.iterdir() if target.exists() else []:
-            entries.append({"name": item.name, "type": "directory" if item.is_dir() else "file"})
+        entries = [{"name": item.name, "type": "directory" if item.is_dir() else "file"} for item in (target.iterdir() if target.exists() else [])]
         result = {"path": req.get("path", ""), "entries": entries}
         record_event(project, op, req, result=result)
         return result
-
     if op == "fs.delete":
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
+        if target.is_dir(): shutil.rmtree(target)
+        elif target.exists(): target.unlink()
         result = {"path": req.get("path", "")}
         record_event(project, op, req, result=result)
         return result
-
     if op == "fs.rename":
         _, source = safe_path(project, req.get("from", ""))
         _, destination = safe_path(project, req.get("to", ""))
@@ -250,27 +328,16 @@ def execute(req):
         result = {"from": req.get("from", ""), "to": req.get("to", "")}
         record_event(project, op, req, result=result)
         return result
-
     if op == "process.run":
         command = str(req.get("command", "")).strip()
         executable = Path(command).name.lower()
-        if executable not in ALLOWED_EXECUTABLES:
-            raise ValueError(f"Executavel nao permitido: {command}")
+        if executable not in ALLOWED_EXECUTABLES: raise ValueError(f"Executavel nao permitido: {command}")
         args = [str(x) for x in req.get("args", [])]
         cwd = req.get("cwd", "")
         working = safe_path(project, cwd)[1] if cwd else base
         timeout = min(max(float(req.get("timeout", 30)), 1), 120)
-        completed = subprocess.run(
-            [command, *args], cwd=working, capture_output=True, text=True,
-            timeout=timeout, shell=False
-        )
-        result = {
-            "exitCode": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
-            "command": command,
-            "cwd": str(working),
-        }
+        completed = subprocess.run([command, *args], cwd=working, capture_output=True, text=True, timeout=timeout, shell=False)
+        result = {"exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr, "command": command, "cwd": str(working)}
         record_event(project, op, req, result=result)
         return result
 
@@ -288,44 +355,27 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
         self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        self._send(204, {})
-
+    def do_OPTIONS(self): self._send(204, {})
     def do_GET(self):
         if urlparse(self.path).path == "/health":
-            self._send(200, {
-                "ok": True,
-                "service": "bingo-python-bridge",
-                "workspace": str(ROOT),
-                "port": PORT,
-                "allowedExecutables": sorted(ALLOWED_EXECUTABLES),
-                "persistentMemory": MEMORY_FILE,
-            })
-        else:
-            self._send(404, {"ok": False, "error": "not_found"})
-
+            self._send(200, {"ok": True, "service": "bingo-python-bridge", "workspace": str(ROOT), "port": PORT, "allowedExecutables": sorted(ALLOWED_EXECUTABLES), "persistentMemory": MEMORY_FILE, "planner": True, "memoryVersion": MEMORY_VERSION})
+        else: self._send(404, {"ok": False, "error": "not_found"})
     def do_POST(self):
-        if urlparse(self.path).path != "/tool":
-            self._send(404, {"ok": False, "error": "not_found"})
-            return
+        if urlparse(self.path).path != "/tool": self._send(404, {"ok": False, "error": "not_found"}); return
         req = {}
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length > 16 * 1024 * 1024:
-                raise ValueError("Mensagem muito grande")
+            if length > 16 * 1024 * 1024: raise ValueError("Mensagem muito grande")
             req = json.loads(self.rfile.read(length).decode("utf-8"))
             result = execute(req)
             self._send(200, {"ok": True, "id": req.get("id"), "op": req.get("op"), "result": result})
-        except subprocess.TimeoutExpired:
-            self._send(408, {"ok": False, "id": req.get("id"), "error": "process_timeout"})
+        except subprocess.TimeoutExpired: self._send(408, {"ok": False, "id": req.get("id"), "error": "process_timeout"})
         except Exception as exc:
-            if req.get("project") and req.get("op") and not str(req.get("op")).startswith("agent.memory."):
-                record_event(project_name(req.get("project")), req.get("op"), req, error=str(exc))
+            if req.get("project") and req.get("op") and not str(req.get("op")).startswith(("agent.memory.", "agent.plan.")):
+                try: record_event(project_name(req.get("project")), req.get("op"), req, error=str(exc))
+                except Exception: pass
             self._send(400, {"ok": False, "id": req.get("id"), "error": str(exc)})
-
-    def log_message(self, *_):
-        return
+    def log_message(self, *_): return
 
 
 if __name__ == "__main__":
