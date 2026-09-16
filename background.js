@@ -2,8 +2,8 @@ const sessions = new Map();
 const PYTHON_BRIDGE = 'http://127.0.0.1:8765';
 const REQUEST_TIMEOUT_MS = 125000;
 const TOOLS = new Set([
-  'project.create','project.status','fs.mkdir','fs.write','fs.read',
-  'fs.list','fs.delete','fs.rename','process.run'
+  'project.create','project.status','agent.memory.read','agent.memory.write',
+  'fs.mkdir','fs.write','fs.read','fs.list','fs.delete','fs.rename','process.run'
 ]);
 
 function sessionFor(tabId) {
