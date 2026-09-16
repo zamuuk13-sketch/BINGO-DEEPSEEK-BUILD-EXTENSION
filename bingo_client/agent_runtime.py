@@ -6,49 +6,42 @@ import platform
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
-from .workspace import Workspace
+from typing import Any, Callable
 
 
 class AgentRuntime:
-    """Local orchestration layer for BINGO Client Stage 6.
+    """Local orchestration layer with persistent memory and permission gates."""
 
-    It owns session context, memory, plan state and capability/permission checks.
-    Actual filesystem/process execution remains delegated to the existing BINGO
-    Python bridge, so the desktop client does not duplicate the V11 sandbox.
-    """
-
-    VERSION = 1
+    VERSION = 2
     MEMORY_FILE = ".bingo-agent.json"
 
-    def __init__(self, project: Path | None, config: dict[str, Any] | None = None):
+    def __init__(self, project: Path | None, config: dict[str, Any] | None = None, permission_request: Callable[[str, str, str], bool] | None = None):
         self.project = project.resolve() if project else None
         self.config = config or {}
+        self.permission_request = permission_request
         self.session_id = f"desktop-{uuid.uuid4().hex[:12]}"
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.memory: dict[str, Any] = self._load_memory()
-        self.plan: dict[str, Any] = self.memory.setdefault("plan", {"goal": "", "tasks": [], "current": None})
-        self.events: list[dict[str, Any]] = self.memory.setdefault("events", [])[-100:]
+        self.plan = self.memory.setdefault("plan", {"goal": "", "tasks": [], "current": None})
+        self.events = self.memory.setdefault("events", [])[-100:]
 
     @property
     def permissions(self) -> dict[str, Any]:
-        return self.config.get("permissions", {})
+        return self.config.setdefault("permissions", {})
 
     def _memory_path(self) -> Path | None:
-        if not self.project:
-            return None
-        return self.project / self.MEMORY_FILE
+        return self.project / self.MEMORY_FILE if self.project else None
 
     def _load_memory(self) -> dict[str, Any]:
         path = self._memory_path()
+        default = {"version": self.VERSION, "sessions": [], "plan": {"goal": "", "tasks": [], "current": None}, "events": []}
         if not path or not path.exists():
-            return {"version": self.VERSION, "sessions": [], "plan": {"goal": "", "tasks": [], "current": None}, "events": []}
+            return default
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
+            return data if isinstance(data, dict) else default
         except (OSError, json.JSONDecodeError):
-            return {"version": self.VERSION, "sessions": [], "plan": {"goal": "", "tasks": [], "current": None}, "events": []}
+            return default
 
     def save(self) -> None:
         path = self._memory_path()
@@ -77,72 +70,55 @@ class AgentRuntime:
         self.record("plan.task.add", task)
 
     def context(self) -> dict[str, Any]:
-        """Build internal context. This object is never displayed in the chat UI."""
         root = self.project
         return {
             "runtime": {"name": "BINGO Agent Runtime", "version": self.VERSION, "sessionId": self.session_id},
-            "workspace": {
-                "selected": bool(root),
-                "path": str(root) if root else None,
-                "safeScope": "selected-project" if root else "none",
-            },
-            "environment": {
-                "os": platform.platform(),
-                "python": platform.python_version(),
-                "machine": platform.machine(),
-                "cwd": os.getcwd(),
-            },
+            "workspace": {"selected": bool(root), "path": str(root) if root else None, "safeScope": "selected-project" if root else "none"},
+            "environment": {"os": platform.platform(), "python": platform.python_version(), "machine": platform.machine(), "cwd": os.getcwd()},
             "capabilities": {
                 "filesystem": bool(root),
-                "terminal": bool(self.permissions.get("terminal", False)),
+                "terminal": self.permissions.get("terminal", False),
                 "internet": self.permissions.get("internet", "approval"),
                 "installations": self.permissions.get("installations", "approval"),
-                "computer": bool(self.permissions.get("computer", False)),
+                "computer": self.permissions.get("computer", False),
             },
             "plan": self.plan,
         }
 
-    def permission_for(self, operation: str) -> tuple[bool, str]:
+    def permission_for(self, operation: str, reason: str = "", details: str = "") -> tuple[bool, str]:
         op = str(operation or "")
         if op.startswith("fs.") or op.startswith("project."):
-            if not self.project:
-                return False, "Abra um projeto antes de usar ferramentas de workspace."
-            return True, "workspace"
-        if op.startswith("process."):
-            if self.permissions.get("terminal", False):
-                return True, "terminal"
-            return False, "Permissão de terminal desativada."
-        if op.startswith("internet."):
-            value = self.permissions.get("internet", "approval")
-            return (value == "allow"), "internet approval required" if value != "allow" else "internet"
-        if op.startswith("install."):
-            value = self.permissions.get("installations", "approval")
-            return (value == "allow"), "installation approval required" if value != "allow" else "installation"
-        if op.startswith("computer."):
-            return (bool(self.permissions.get("computer", False)), "computer permission required")
-        return True, "agent"
+            return (bool(self.project), "workspace" if self.project else "Abra um projeto primeiro.")
 
-    def tool_request(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        allowed, reason = self.permission_for(operation)
-        result = {"allowed": allowed, "operation": operation, "reason": reason, "arguments": arguments or {}}
+        category = None
+        if op.startswith("process."): category = "terminal"
+        elif op.startswith("internet."): category = "internet"
+        elif op.startswith("install."): category = "installations"
+        elif op.startswith("computer."): category = "computer"
+        if not category:
+            return True, "agent"
+
+        value = self.permissions.get(category, "approval")
+        if value is True or value == "allow":
+            return True, category
+        if value is False or value == "deny":
+            return False, f"Permissão de {category} negada."
+        if self.permission_request:
+            allowed = bool(self.permission_request(op, reason or f"O agente precisa de acesso a {category}.", details))
+            return allowed, "approved" if allowed else f"Permissão de {category} negada pelo usuário."
+        return False, f"Permissão de {category} requer aprovação."
+
+    def tool_request(self, operation: str, arguments: dict[str, Any] | None = None, reason: str = "", details: str = "") -> dict[str, Any]:
+        allowed, reason_out = self.permission_for(operation, reason, details)
+        result = {"allowed": allowed, "operation": operation, "reason": reason_out, "arguments": arguments or {}}
         self.record("tool.request", result)
         return result
 
     def system_summary(self) -> str:
-        """Compact internal briefing used by the transport layer."""
-        ctx = self.context()
-        return json.dumps(ctx, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(self.context(), ensure_ascii=False, separators=(",", ":"))
 
     def status(self) -> dict[str, Any]:
-        return {
-            "version": self.VERSION,
-            "sessionId": self.session_id,
-            "project": str(self.project) if self.project else None,
-            "goal": self.plan.get("goal", ""),
-            "tasks": len(self.plan.get("tasks", [])),
-            "events": len(self.events),
-            "capabilities": self.context()["capabilities"],
-        }
+        return {"version": self.VERSION, "sessionId": self.session_id, "project": str(self.project) if self.project else None, "goal": self.plan.get("goal", ""), "tasks": len(self.plan.get("tasks", [])), "events": len(self.events), "capabilities": self.context()["capabilities"]}
 
     def reset_session(self) -> None:
         self.session_id = f"desktop-{uuid.uuid4().hex[:12]}"
