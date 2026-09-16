@@ -1,9 +1,11 @@
 (() => {
   'use strict';
-  const TOOL_VERSION = 1;
+  const TOOL_VERSION = 2;
   const tools = {
-    'project.create': { description: 'Create a real local project workspace.', args: ['name'] },
-    'project.status': { description: 'Inspect the real local project workspace.', args: ['project'] },
+    'project.create': { description: 'Create a real local project workspace and initialize persistent agent memory.', args: ['name'] },
+    'project.status': { description: 'Inspect the real local project workspace and memory status.', args: ['project'] },
+    'agent.memory.read': { description: 'Read persistent BINGO agent memory from the project.', args: ['project'] },
+    'agent.memory.write': { description: 'Replace persistent BINGO agent memory for the project.', args: ['project', 'memory'] },
     'fs.mkdir': { description: 'Create a directory inside the project.', args: ['project', 'path'] },
     'fs.write': { description: 'Write a UTF-8 file to the local project.', args: ['project', 'path', 'content'] },
     'fs.read': { description: 'Read a UTF-8 local project file.', args: ['project', 'path'] },
@@ -37,6 +39,8 @@
     bridge: {
       createProject: name => window.BingoAgent.call('project.create', { name }),
       status: project => window.BingoAgent.call('project.status', { project }),
+      readMemory: project => window.BingoAgent.call('agent.memory.read', { project }),
+      writeMemory: (project, memory) => window.BingoAgent.call('agent.memory.write', { project, memory }),
       mkdir: (project, path) => window.BingoAgent.call('fs.mkdir', { project, path }),
       write: (project, path, content) => window.BingoAgent.call('fs.write', { project, path, content }),
       read: (project, path) => window.BingoAgent.call('fs.read', { project, path }),
