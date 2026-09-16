@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.9.0",
-  "description": "BINGO Agent V11 + BINGO Client Stage 5 com relay desktop para DeepSeek.",
+  "version": "2.9.1",
+  "description": "BINGO Extension Stage 1 — foundation, lifecycle, DeepSeek detection and desktop relay.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*", "http://127.0.0.1:8765/*", "http://127.0.0.1:8766/*"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
-      "js": ["agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-runtime-guard.js", "agent/desktop-bridge-v5.js"],
+      "js": ["agent/extension-core.js", "agent/extension-foundation.js", "agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-runtime-guard.js", "agent/desktop-bridge-v5.js"],
       "run_at": "document_idle"
     }
   ],
