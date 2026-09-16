@@ -9,11 +9,7 @@ async function desktopRequest(path, options = {}, timeout = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(`${BINGO_DESKTOP}${path}`, {
-      ...options,
-      signal: controller.signal,
-      headers: {'Content-Type':'application/json', ...(options.headers || {})}
-    });
+    const response = await fetch(`${BINGO_DESKTOP}${path}`, {...options, signal:controller.signal, headers:{'Content-Type':'application/json', ...(options.headers || {})}});
     let data;
     try { data = await response.json(); } catch (_) { throw new Error(`Desktop relay HTTP ${response.status} sem JSON.`); }
     if (!response.ok || !data.ok) throw new Error(data.error || `Desktop relay HTTP ${response.status}`);
@@ -22,103 +18,60 @@ async function desktopRequest(path, options = {}, timeout = 8000) {
 }
 
 function envelopeResult(request, success, result = null, error = null) {
-  return {
-    protocol:'BINGO', version:PROTOCOL_VERSION, type:success ? 'tool_result' : 'error',
-    id:request?.id || `bg_${Date.now()}`, sessionId:request?.sessionId || 'unknown', timestamp:Date.now(),
-    success:!!success, result:result || null,
-    error:error ? {code:error.code || 'BRIDGE_ERROR', message:error.message || String(error), details:null} : null
-  };
+  return {protocol:'BINGO',version:PROTOCOL_VERSION,type:success?'tool_result':'error',id:request?.id||`bg_${Date.now()}`,sessionId:request?.sessionId||'unknown',timestamp:Date.now(),success:!!success,result:result||null,error:error?{code:error.code||'BRIDGE_ERROR',message:error.message||String(error),details:null}:null};
 }
-
 function validEnvelope(message) {
-  return !!message && message.protocol === 'BINGO' && Number(message.version) === PROTOCOL_VERSION &&
-    typeof message.type === 'string' && typeof message.id === 'string' && typeof message.sessionId === 'string';
+  return !!message && message.protocol === 'BINGO' && Number(message.version) === PROTOCOL_VERSION && typeof message.type === 'string' && typeof message.id === 'string' && typeof message.sessionId === 'string';
 }
-
 async function handleProtocol(request, tabId) {
-  if (!validEnvelope(request)) throw Object.assign(new Error('Envelope BINGO V2 inválido.'), {code:'INVALID_PROTOCOL'});
-  const payload = request.payload || {};
-  const connectionId = String(payload.connectionId || request.meta?.connectionId || '');
-  const connection = bridgeConnections.get(tabId);
-
-  if (request.type === 'connect') {
-    const id = connectionId || `tab-${tabId || 'unknown'}`;
-    const data = await desktopRequest('/connect', {method:'POST', body:JSON.stringify({chat_name:payload.chatName || 'DeepSeek', connection_id:id})});
-    bridgeConnections.set(tabId, {connectionId:id, connectedAt:Date.now(), failures:0, sessionId:request.sessionId});
-    return envelopeResult(request, true, {...data, connectionId:id, bridgeVersion:PROTOCOL_VERSION});
+  if (!validEnvelope(request)) throw Object.assign(new Error('Envelope BINGO V2 inválido.'),{code:'INVALID_PROTOCOL'});
+  const payload=request.payload||{};
+  const connectionId=String(payload.connectionId||request.meta?.connectionId||'');
+  const connection=bridgeConnections.get(tabId);
+  if(request.type==='connect') {
+    const id=connectionId||`tab-${tabId||'unknown'}`;
+    const data=await desktopRequest('/connect',{method:'POST',body:JSON.stringify({chat_name:payload.chatName||'DeepSeek',connection_id:id})});
+    bridgeConnections.set(tabId,{connectionId:id,connectedAt:Date.now(),failures:0,sessionId:request.sessionId});
+    return envelopeResult(request,true,{...data,connectionId:id,bridgeVersion:PROTOCOL_VERSION});
   }
-
-  if (request.type === 'disconnect') {
-    try { await desktopRequest('/disconnect', {method:'POST', body:'{}'}); }
-    finally { bridgeConnections.delete(tabId); }
-    return envelopeResult(request, true, {disconnected:true});
+  if(request.type==='disconnect') { try { await desktopRequest('/disconnect',{method:'POST',body:'{}'}); } finally { bridgeConnections.delete(tabId); } return envelopeResult(request,true,{disconnected:true}); }
+  if(!connection) throw Object.assign(new Error('Conexão BINGO não registrada para esta aba.'),{code:'NOT_CONNECTED'});
+  if(connectionId&&connection.connectionId!==connectionId) throw Object.assign(new Error('Connection ID inválido.'),{code:'CONNECTION_MISMATCH'});
+  if(request.type==='heartbeat') return envelopeResult(request,true,{connectionId:connection.connectionId,relay:await desktopRequest('/status')});
+  if(request.type==='message') {
+    const text=String(payload.text||'');
+    if(!text) throw Object.assign(new Error('Mensagem vazia.'),{code:'EMPTY_MESSAGE'});
+    return envelopeResult(request,true,await desktopRequest('/inbound',{method:'POST',body:JSON.stringify({text,connection_id:connection.connectionId})}));
   }
-
-  if (!connection) throw Object.assign(new Error('Conexão BINGO não registrada para esta aba.'), {code:'NOT_CONNECTED'});
-  if (connectionId && connection.connectionId !== connectionId) throw Object.assign(new Error('Connection ID inválido.'), {code:'CONNECTION_MISMATCH'});
-
-  if (request.type === 'heartbeat') {
-    const data = await desktopRequest('/status');
-    return envelopeResult(request, true, {connectionId:connection.connectionId, relay:data});
-  }
-
-  if (request.type === 'message') {
-    const text = String(payload.text || '');
-    if (!text) throw Object.assign(new Error('Mensagem vazia.'), {code:'EMPTY_MESSAGE'});
-    const data = await desktopRequest('/inbound', {method:'POST', body:JSON.stringify({text, connection_id:connection.connectionId})});
-    return envelopeResult(request, true, data);
-  }
-
-  if (request.type === 'cancel') {
-    return envelopeResult(request, true, {cancelled:false, reason:'O relay atual não mantém cancelamento de mensagens já entregues.'});
-  }
-
-  throw Object.assign(new Error(`Tipo de mensagem BINGO V2 não suportado: ${request.type}`), {code:'UNSUPPORTED_TYPE'});
+  if(request.type==='cancel') return envelopeResult(request,true,{cancelled:false,reason:'O relay atual não mantém cancelamento de mensagens já entregues.'});
+  throw Object.assign(new Error(`Tipo de mensagem BINGO V2 não suportado: ${request.type}`),{code:'UNSUPPORTED_TYPE'});
 }
 
-function reply(promise, sendResponse) {
-  promise.then(sendResponse).catch(error => sendResponse({ok:false,error:{code:error.code || 'BRIDGE_ERROR',message:error.message || String(error)}}));
-  return true;
+async function handlePermission(request, tabId) {
+  if(!validEnvelope(request)||request.type!=='permission_request') throw Object.assign(new Error('Permission envelope inválido.'),{code:'INVALID_PERMISSION'});
+  const connection=bridgeConnections.get(tabId);
+  if(!connection) throw Object.assign(new Error('BINGO Client não conectado.'),{code:'NOT_CONNECTED'});
+  if(request.sessionId&&connection.sessionId&&request.sessionId!==connection.sessionId) throw Object.assign(new Error('Sessão de permissão inválida.'),{code:'SESSION_MISMATCH'});
+  const payload={id:request.id,session_id:request.sessionId,category:String(request.category||'computer'),operation:String(request.operation||'unknown'),reason:String(request.reason||'Permissão necessária.'),details:request.details||{}};
+  return desktopRequest('/permission',{method:'POST',body:JSON.stringify(payload)},120000).then(data=>({ok:true,message:data.result||data,transport:'desktop-permission-v1'})).catch(error=>({ok:false,error:{code:error.code||'PERMISSION_UNAVAILABLE',message:error.message||String(error)}}));
 }
+function reply(promise,sendResponse) { promise.then(sendResponse).catch(error=>sendResponse({ok:false,error:{code:error.code||'BRIDGE_ERROR',message:error.message||String(error)}})); return true; }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  const tabId = sender.tab?.id;
-
-  if (msg.type === 'BINGO_PROTOCOL_V2') {
-    return reply(handleProtocol(msg.envelope, tabId).then(envelope => ({ok:true,envelope})), sendResponse);
+chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
+  const tabId=sender.tab?.id;
+  if(msg.type==='BINGO_PROTOCOL_V2') return reply(handleProtocol(msg.envelope,tabId).then(envelope=>({ok:true,envelope})),sendResponse);
+  if(msg.type==='BINGO_PERMISSION_REQUEST') return reply(handlePermission(msg.message,tabId),sendResponse);
+  if(msg.type==='BINGO_PERMISSION_STATUS') { sendResponse({ok:true,connected:!!bridgeConnections.get(tabId),version:PROTOCOL_VERSION}); return true; }
+  if(msg.type==='BINGO_DESKTOP_CONNECT') {
+    const connectionId=String(msg.connectionId||`tab-${tabId||'unknown'}`);
+    return reply(desktopRequest('/connect',{method:'POST',body:JSON.stringify({chat_name:msg.chatName||'DeepSeek',connection_id:connectionId})}).then(data=>{bridgeConnections.set(tabId,{connectionId,connectedAt:Date.now(),failures:0,sessionId:msg.sessionId||null});return {...data,connectionId,bridgeVersion:PROTOCOL_VERSION};}),sendResponse);
   }
-
-  // Legacy V5 compatibility while the old V11 transport is still installed.
-  if (msg.type === 'BINGO_DESKTOP_CONNECT') {
-    const connectionId = String(msg.connectionId || `tab-${tabId || 'unknown'}`);
-    return reply(desktopRequest('/connect', {method:'POST', body:JSON.stringify({chat_name:msg.chatName || 'DeepSeek', connection_id:connectionId})}).then(data => {
-      bridgeConnections.set(tabId, {connectionId, connectedAt:Date.now(), failures:0});
-      return {...data, connectionId, bridgeVersion:PROTOCOL_VERSION};
-    }), sendResponse);
-  }
-  if (msg.type === 'BINGO_DESKTOP_STATUS') return reply(desktopRequest('/status'), sendResponse);
-  if (msg.type === 'BINGO_DESKTOP_POLL') return reply(desktopRequest('/outbound'), sendResponse);
-  if (msg.type === 'BINGO_DESKTOP_SEND') {
-    const connection = bridgeConnections.get(tabId);
-    if (!connection || connection.connectionId !== msg.connectionId) {
-      sendResponse({ok:false,error:'Conexão BINGO não registrada para esta aba.'});
-      return true;
-    }
-    return reply(desktopRequest('/inbound', {method:'POST', body:JSON.stringify({text:String(msg.text || ''), connection_id:connection.connectionId})}), sendResponse);
-  }
-  if (msg.type === 'BINGO_DESKTOP_ASSISTANT') {
-    const connection = bridgeConnections.get(tabId);
-    if (!connection) { sendResponse({ok:false,error:'Bridge não conectada.'}); return true; }
-    return reply(desktopRequest('/inbound', {method:'POST', body:JSON.stringify({text:msg.text || '', connection_id:connection.connectionId})}), sendResponse);
-  }
-  if (msg.type === 'BINGO_DESKTOP_DISCONNECT') {
-    return reply(desktopRequest('/disconnect', {method:'POST', body:'{}'}).finally(() => bridgeConnections.delete(tabId)), sendResponse);
-  }
-  if (msg.type === 'BINGO_EXTENSION_BRIDGE_STATUS') {
-    sendResponse({ok:true, bridge:bridgeConnections.get(tabId) || null, version:PROTOCOL_VERSION});
-    return true;
-  }
+  if(msg.type==='BINGO_DESKTOP_STATUS') return reply(desktopRequest('/status'),sendResponse);
+  if(msg.type==='BINGO_DESKTOP_POLL') return reply(desktopRequest('/outbound'),sendResponse);
+  if(msg.type==='BINGO_DESKTOP_SEND') { const connection=bridgeConnections.get(tabId); if(!connection||connection.connectionId!==msg.connectionId){sendResponse({ok:false,error:'Conexão BINGO não registrada para esta aba.'});return true;} return reply(desktopRequest('/inbound',{method:'POST',body:JSON.stringify({text:String(msg.text||''),connection_id:connection.connectionId})}),sendResponse); }
+  if(msg.type==='BINGO_DESKTOP_ASSISTANT') { const connection=bridgeConnections.get(tabId); if(!connection){sendResponse({ok:false,error:'Bridge não conectada.'});return true;} return reply(desktopRequest('/inbound',{method:'POST',body:JSON.stringify({text:msg.text||'',connection_id:connection.connectionId})}),sendResponse); }
+  if(msg.type==='BINGO_DESKTOP_DISCONNECT') return reply(desktopRequest('/disconnect',{method:'POST',body:'{}'}).finally(()=>bridgeConnections.delete(tabId)),sendResponse);
+  if(msg.type==='BINGO_EXTENSION_BRIDGE_STATUS') {sendResponse({ok:true,bridge:bridgeConnections.get(tabId)||null,version:PROTOCOL_VERSION});return true;}
 });
-
-chrome.tabs.onRemoved.addListener(tabId => bridgeConnections.delete(tabId));
-BingoExtension?.log('info', 'Background Bridge V2 + Protocol V2 carregado', {version:BingoExtension.version, protocol:PROTOCOL_VERSION});
+chrome.tabs.onRemoved.addListener(tabId=>bridgeConnections.delete(tabId));
+BingoExtension?.log('info','Background Bridge V2 + Permission Handshake V9 carregado',{version:BingoExtension.version,protocol:PROTOCOL_VERSION});
