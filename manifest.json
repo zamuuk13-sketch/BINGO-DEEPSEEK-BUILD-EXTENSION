@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.9.8",
-  "description": "BINGO Extension Stage 8 — Autonomy Controller com pausa, cancelamento e recovery.",
+  "version": "2.9.9",
+  "description": "BINGO Extension Stage 9 — Permission Handshake com o BINGO Client.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*", "http://127.0.0.1:8765/*", "http://127.0.0.1:8766/*"],
   "action": {"default_title": "Bingo DeepSeek Build", "default_popup": "popup.html"},
   "content_scripts": [{
     "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
-    "js": ["agent/extension-core.js", "agent/extension-foundation.js", "agent/protocol-v2.js", "agent/deepseek-bridge-v2.js", "agent/invisible-transport-v3.js", "agent/tool-engine-v5.js", "agent/context-engine-v6.js", "agent/continuity-v7.js", "agent/autonomy-controller-v8.js", "agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-runtime-guard.js", "agent/desktop-bridge-v5.js"],
+    "js": ["agent/extension-core.js", "agent/extension-foundation.js", "agent/protocol-v2.js", "agent/deepseek-bridge-v2.js", "agent/invisible-transport-v3.js", "agent/tool-engine-v5.js", "agent/context-engine-v6.js", "agent/continuity-v7.js", "agent/autonomy-controller-v8.js", "agent/permission-handshake-v9.js", "agent/tool-engine.js", "agent/python-bridge-client.js", "content.js", "agent/v7-injector.js", "agent/v10-injector.js", "agent/v11-injector.js", "agent/v11-runtime-guard.js", "agent/desktop-bridge-v5.js"],
     "run_at": "document_idle"
   }],
   "background": {"service_worker": "agent/background-v5.js"}
