@@ -1,77 +1,49 @@
 (() => {
+  'use strict';
   const TOOL_VERSION = 1;
-  const pending = new Map();
-  let sequence = 0;
-  let port = null;
-
   const tools = {
-    'project.create': { description: 'Create a project workspace.', args: ['name'], local: true },
-    'project.status': { description: 'Inspect project workspace status.', args: ['project'], local: true },
-    'fs.mkdir': { description: 'Create a directory inside the project.', args: ['project', 'path'], local: true },
-    'fs.write': { description: 'Write a UTF-8 project file.', args: ['project', 'path', 'content'], local: true },
-    'fs.read': { description: 'Read a UTF-8 project file.', args: ['project', 'path'], local: true },
-    'fs.list': { description: 'List a project directory.', args: ['project', 'path'], local: true },
-    'fs.delete': { description: 'Delete a project file or directory.', args: ['project', 'path'], local: true },
-    'fs.rename': { description: 'Rename a project path.', args: ['project', 'from', 'to'], local: true },
-    'process.run': { description: 'Run an approved local process inside a project.', args: ['project', 'command', 'args', 'cwd'], local: true }
+    'project.create': { description: 'Create a real local project workspace.', args: ['name'] },
+    'project.status': { description: 'Inspect the real local project workspace.', args: ['project'] },
+    'fs.mkdir': { description: 'Create a directory inside the project.', args: ['project', 'path'] },
+    'fs.write': { description: 'Write a UTF-8 file to the local project.', args: ['project', 'path', 'content'] },
+    'fs.read': { description: 'Read a UTF-8 local project file.', args: ['project', 'path'] },
+    'fs.list': { description: 'List local project files and directories.', args: ['project', 'path'] },
+    'fs.delete': { description: 'Delete a local project path.', args: ['project', 'path'] },
+    'fs.rename': { description: 'Rename or move a local project path.', args: ['project', 'from', 'to'] },
+    'process.run': { description: 'Run an approved executable inside the project.', args: ['project', 'command', 'args', 'cwd'] }
   };
 
-  function connect() {
-    if (port) return port;
-    try {
-      port = chrome.runtime.connectNative('com.bingo.deepseek.build');
-      port.onMessage.addListener(onMessage);
-      port.onDisconnect.addListener(() => {
-        for (const [, p] of pending) p.reject(new Error('Bingo bridge desconectado'));
-        pending.clear();
-        port = null;
-      });
-    } catch (error) {
-      port = null;
-      throw error;
-    }
-    return port;
-  }
-
-  function onMessage(message) {
-    if (message?.id && pending.has(message.id)) {
-      const p = pending.get(message.id);
-      pending.delete(message.id);
-      message.ok ? p.resolve(message) : p.reject(Object.assign(new Error(message.error?.message || 'Bridge error'), { detail: message }));
-      return;
-    }
-    window.postMessage({ source: 'BINGO_AGENT', type: 'BRIDGE_EVENT', payload: message }, '*');
-  }
-
-  function call(op, payload = {}) {
-    const id = `bingo-${Date.now()}-${++sequence}`;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try {
-        connect().postMessage({ protocol: TOOL_VERSION, id, op, ...payload });
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
+  function validate(tool, args) {
+    const schema = tools[tool];
+    if (!schema) throw new Error(`Ferramenta desconhecida: ${tool}`);
+    if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('args deve ser um objeto.');
+    for (const key of schema.args) if (!(key in args)) throw new Error(`Argumento obrigatorio ausente: ${key}`);
   }
 
   window.BingoAgent = {
     version: TOOL_VERSION,
     listTools() { return structuredClone(tools); },
-    call,
-    isConnected() { return !!port; },
-    disconnect() { if (port) port.disconnect(); },
+    call(tool, args = {}) {
+      validate(tool, args);
+      return new Promise((resolve, reject) => {
+        const requestId = `tool-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        chrome.runtime.sendMessage({ type: 'BINGO_TOOL_CALL', requestId, tool, args }, response => {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Erro da bridge.'), { detail: response }));
+          resolve(response);
+        });
+      });
+    },
     bridge: {
-      createProject: name => call('project.create', { name }),
-      status: project => call('project.status', { project }),
-      mkdir: (project, path) => call('fs.mkdir', { project, path }),
-      write: (project, path, content) => call('fs.write', { project, path, content }),
-      read: (project, path) => call('fs.read', { project, path }),
-      list: (project, path = '') => call('fs.list', { project, path }),
-      remove: (project, path) => call('fs.delete', { project, path }),
-      rename: (project, from, to) => call('fs.rename', { project, from, to }),
-      run: (project, command, args = [], cwd = '') => call('process.run', { project, command, args, cwd })
+      createProject: name => window.BingoAgent.call('project.create', { name }),
+      status: project => window.BingoAgent.call('project.status', { project }),
+      mkdir: (project, path) => window.BingoAgent.call('fs.mkdir', { project, path }),
+      write: (project, path, content) => window.BingoAgent.call('fs.write', { project, path, content }),
+      read: (project, path) => window.BingoAgent.call('fs.read', { project, path }),
+      list: (project, path = '') => window.BingoAgent.call('fs.list', { project, path }),
+      remove: (project, path) => window.BingoAgent.call('fs.delete', { project, path }),
+      rename: (project, from, to) => window.BingoAgent.call('fs.rename', { project, from, to }),
+      run: (project, command, args = [], cwd = '') => window.BingoAgent.call('process.run', { project, command, args, cwd })
     }
   };
 })();
