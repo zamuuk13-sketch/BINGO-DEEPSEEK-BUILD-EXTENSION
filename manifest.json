@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Bingo DeepSeek Build",
+  "version": "1.0.0",
+  "description": "Ativa um modo de projeto no DeepSeek, acompanha arquivos gerados e exporta o projeto como ZIP.",
+  "permissions": ["storage", "downloads"],
+  "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
+  "action": {
+    "default_title": "Bingo DeepSeek Build",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
