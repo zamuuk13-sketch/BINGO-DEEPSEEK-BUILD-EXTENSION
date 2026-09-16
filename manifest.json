@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.0.0",
-  "description": "Ponte de controle entre o DeepSeek e um sistema de projetos: arquivos, pastas, testes, estado e exportacao ZIP.",
+  "version": "2.1.0",
+  "description": "Agente de desenvolvimento para DeepSeek com ferramentas de projeto e bridge local.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
-      "js": ["content.js"],
+      "js": ["agent/tool-engine.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
