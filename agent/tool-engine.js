@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const TOOL_VERSION = 3;
+  const TOOL_VERSION = 4;
   const tools = {
     'project.create': { description: 'Create a real local project workspace and initialize persistent agent memory.', args: ['name'] },
     'project.status': { description: 'Inspect project, memory and planner status.', args: ['project'] },
@@ -10,6 +10,7 @@
     'agent.plan.write': { description: 'Create or replace the persistent execution plan.', args: ['project', 'plan'] },
     'agent.plan.update': { description: 'Update one planner task status, notes or attempts.', args: ['project', 'taskId', 'status', 'notes', 'attempts'] },
     'agent.plan.next': { description: 'Select the next unblocked planner task and mark it running.', args: ['project'] },
+    'agent.verify': { description: 'Run a real project test and return structured diagnostics with failure classification and repair guidance.', args: ['project', 'command', 'args', 'cwd', 'timeout'] },
     'fs.mkdir': { description: 'Create a directory inside the project.', args: ['project', 'path'] },
     'fs.write': { description: 'Write a UTF-8 file to the local project.', args: ['project', 'path', 'content'] },
     'fs.read': { description: 'Read a UTF-8 local project file.', args: ['project', 'path'] },
@@ -24,7 +25,7 @@
     if (!schema) throw new Error(`Ferramenta desconhecida: ${tool}`);
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('args deve ser um objeto.');
     for (const key of schema.args) {
-      if (!(key in args) && !['status','notes','attempts'].includes(key)) {
+      if (!(key in args) && !['status','notes','attempts','timeout','cwd'].includes(key)) {
         throw new Error(`Argumento obrigatorio ausente: ${key}`);
       }
     }
@@ -53,6 +54,7 @@
       writePlan: (project, plan) => window.BingoAgent.call('agent.plan.write', { project, plan }),
       updatePlan: (project, taskId, status, notes = '', attempts = 0) => window.BingoAgent.call('agent.plan.update', { project, taskId, status, notes, attempts }),
       nextTask: project => window.BingoAgent.call('agent.plan.next', { project }),
+      verify: (project, command, args = [], cwd = '', timeout = 30) => window.BingoAgent.call('agent.verify', { project, command, args, cwd, timeout }),
       mkdir: (project, path) => window.BingoAgent.call('fs.mkdir', { project, path }),
       write: (project, path, content) => window.BingoAgent.call('fs.write', { project, path, content }),
       read: (project, path) => window.BingoAgent.call('fs.read', { project, path }),
