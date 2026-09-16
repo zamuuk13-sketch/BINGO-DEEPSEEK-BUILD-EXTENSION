@@ -1,5 +1,5 @@
-/* BINGO V5 desktop relay layer. Loaded after the existing background worker. */
-importScripts('../background.js');
+/* BINGO Extension Foundation + V5 desktop relay background worker. */
+importScripts('./extension-core.js', '../background.js');
 
 const BINGO_DESKTOP = 'http://127.0.0.1:8766';
 
@@ -47,3 +47,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+BingoExtension?.log('info', 'Background Foundation carregado', {version: BingoExtension.version});
