@@ -2,7 +2,6 @@ import json
 import os
 import shutil
 import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -109,6 +108,7 @@ def execute(req):
             "stdout": completed.stdout,
             "stderr": completed.stderr,
             "command": command,
+            "cwd": str(working),
         }
 
     raise ValueError(f"Operacao desconhecida: {op}")
@@ -131,7 +131,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == "/health":
-            self._send(200, {"ok": True, "service": "bingo-python-bridge", "workspace": str(ROOT), "port": PORT})
+            self._send(200, {
+                "ok": True,
+                "service": "bingo-python-bridge",
+                "workspace": str(ROOT),
+                "port": PORT,
+                "allowedExecutables": sorted(ALLOWED_EXECUTABLES),
+            })
         else:
             self._send(404, {"ok": False, "error": "not_found"})
 
@@ -139,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         if urlparse(self.path).path != "/tool":
             self._send(404, {"ok": False, "error": "not_found"})
             return
+        req = {}
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length > 16 * 1024 * 1024:
@@ -147,9 +154,9 @@ class Handler(BaseHTTPRequestHandler):
             result = execute(req)
             self._send(200, {"ok": True, "id": req.get("id"), "op": req.get("op"), "result": result})
         except subprocess.TimeoutExpired:
-            self._send(408, {"ok": False, "id": req.get("id") if 'req' in locals() else None, "error": "process_timeout"})
+            self._send(408, {"ok": False, "id": req.get("id"), "error": "process_timeout"})
         except Exception as exc:
-            self._send(400, {"ok": False, "id": req.get("id") if 'req' in locals() else None, "error": str(exc)})
+            self._send(400, {"ok": False, "id": req.get("id"), "error": str(exc)})
 
     def log_message(self, *_):
         return
