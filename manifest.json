@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.2.0",
-  "description": "Agente de desenvolvimento para DeepSeek com tool loop e bridge local.",
+  "version": "2.3.0",
+  "description": "Agente de desenvolvimento para DeepSeek com bridge Python local.",
   "permissions": ["storage", "downloads"],
-  "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
+  "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*", "http://127.0.0.1:8765/*"],
   "action": {
     "default_title": "Bingo DeepSeek Build",
     "default_popup": "popup.html"
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
-      "js": ["agent/tool-engine.js", "content.js"],
+      "js": ["agent/tool-engine.js", "agent/python-bridge-client.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
