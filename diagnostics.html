@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BINGO • Diagnostics</title>
+<style>
+body{margin:0;background:#0d0d0d;color:#eee;font:14px Arial,sans-serif}.top{padding:16px 20px;border-bottom:1px solid #252525;display:flex;align-items:center;gap:10px}.top h1{font-size:18px;margin:0;flex:1}.wrap{padding:18px;max-width:1100px;margin:auto}.grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px}.card{background:#151515;border:1px solid #292929;border-radius:10px;padding:13px}.label{color:#888;font-size:11px;text-transform:uppercase}.value{font-size:20px;font-weight:700;margin-top:5px}.ok{color:#8ee28e}.bad{color:#ff8585}.warn{color:#ffd36a}button{background:#f1f1f1;color:#111;border:0;border-radius:8px;padding:9px 12px;font-weight:700;cursor:pointer;margin-left:6px}.secondary{background:#292929;color:#fff}.section{margin-top:16px;background:#121212;border:1px solid #242424;border-radius:10px;padding:14px}.section h2{font-size:13px;margin:0 0 10px}.mono{font:12px Consolas,monospace;white-space:pre-wrap;color:#bbb;max-height:300px;overflow:auto}.actions{display:flex;gap:6px}.actions button{margin:0}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(130px,1fr))}}
+</style>
+</head>
+<body>
+<div class="top"><h1>🛠 BINGO Diagnostics • Stage 14</h1><button class="secondary" id="refresh">Atualizar</button><button id="export">Exportar JSON</button></div>
+<div class="wrap">
+<div class="grid" id="metrics"></div>
+<div class="section"><h2>Conexões e protocolo</h2><div class="mono" id="connections">Carregando…</div><div class="actions"><button class="secondary" id="test">Testar conexões</button><button class="secondary" id="clear">Limpar métricas</button></div></div>
+<div class="section"><h2>Erros recentes</h2><div class="mono" id="errors">Nenhum erro.</div></div>
+<div class="section"><h2>Eventos recentes</h2><div class="mono" id="events">Nenhum evento.</div></div>
+</div>
+<script src="diagnostics.js"></script>
+</body>
+</html>
