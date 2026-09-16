@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bingo DeepSeek Build",
-  "version": "2.1.0",
-  "description": "Agente de desenvolvimento para DeepSeek com ferramentas de projeto e bridge local.",
+  "version": "2.2.0",
+  "description": "Agente de desenvolvimento para DeepSeek com tool loop e bridge local.",
   "permissions": ["storage", "downloads"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://www.deepseek.com/*"],
   "action": {
