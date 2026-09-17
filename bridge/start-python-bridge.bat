@@ -3,12 +3,12 @@ setlocal
 cd /d "%~dp0python"
 where py >nul 2>nul
 if %errorlevel%==0 (
-  py bingo_bridge_v13.py
+  py bingo_bridge_v14.py
   goto :end
 )
 where python >nul 2>nul
 if %errorlevel%==0 (
-  python bingo_bridge_v13.py
+  python bingo_bridge_v14.py
   goto :end
 )
 echo [BINGO] Python nao encontrado no PATH.
