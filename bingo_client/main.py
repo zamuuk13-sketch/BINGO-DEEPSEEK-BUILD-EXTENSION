@@ -44,7 +44,12 @@ class BingoClient(tk.Tk):
     def __init__(self):
         super().__init__(); self.config_store = ConfigStore(); self.project_path = None; self.workspace = None; self.terminal_visible = False
         self.title(f"{APP_NAME} • {APP_VERSION}"); self.geometry("1360x820"); self.minsize(1050, 680); self.configure(bg=self.BG)
-        self.protocol("WM_DELETE_WINDOW", self.on_close); self._configure_ttk(); self._build_ui(); self._restore_project(); self.bind_all("<Control-`>", lambda _e: self.toggle_terminal() or "break")
+        self.protocol("WM_DELETE_WINDOW", self.on_close); self._configure_ttk(); self._build_ui()
+        # Restore the previous project only after all subclasses have finished
+        # building their additional UI. Stage 9/10 create dashboard widgets
+        # after super().__init__(), so restoring here would call them too early.
+        self.after_idle(self._restore_project)
+        self.bind_all("<Control-`>", lambda _e: self.toggle_terminal() or "break")
 
     def _configure_ttk(self):
         style = ttk.Style(self)
